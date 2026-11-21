@@ -1,0 +1,704 @@
+// Panneau de droite : réglages précis de ce qui est choisi.
+// Rien de choisi : l'outil en cours, la feuille, le croquis de fond et les gestes.
+import { etat, feuille, modifie, rafraichir, toast, crochets, appliquerVue } from './etat.js';
+import { TYPES_BARRE, FORMES_TREILLIS, NOM_BARRE, NOM_NOEUD, carteNoeuds, pointCote } from './geometrie.js';
+import { supprimerSelection, retourner, copier, symetrie, reglagesBarre } from './commandes.js';
+import { apresDeplacement, synchroCotes, couperParNoeuds } from './topologie.js';
+import { choisirFond, urlCroquis } from './croquis.js';
+import { nomFichier } from './sauvegarde.js';
+import { enLigne, telecharger } from './mode.js';
+import { svgPapier } from './rendu.js';
+import { picto, ico } from './pictos.js';
+import { etalonnerCroquis, deplacerCroquis, nomOutil } from './outils.js';
+import { demanderDessin } from './scene.js';
+
+// ---------- Petits outils ----------
+const LISTES = { n: 'noeuds', b: 'barres', c: 'cotes', t: 'textes', s: 'traits' };
+const objet = (id, f) => (f?.[LISTES[id?.[0]]] || []).find((o) => o.id === id);
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
+const arr = (v) => Math.round(v * 1e6) / 1e6;
+const RAD = Math.PI / 180;
+const APPUIS = new Set(['appui', 'encastrement', 'glissant']);
+const RETOURNABLES = new Set(['treillis', 'dalle', 'toile', 'sol']);
+const ORDRE_NOEUDS = ['appui', 'encastrement', 'rotule', 'rigide', 'glissant', 'libre'];
+const REGLAGES = { 't.h': ['treillis', 'h'], 't.n': ['treillis', 'n'], 'd.e': ['dalle', 'e'], 'o.fleche': ['toile', 'fleche'] };
+const BARRE = new Set(['b.longueur', 'b.angle', 'b.dx', 'b.dy']);
+
+// Nombre affiché : virgule, sans zéros inutiles, jamais « -0 ».
+function nb(v, d = 3) {
+  if (!Number.isFinite(+v)) return '';
+  const r = +(+v).toFixed(d);
+  return String(r === 0 ? 0 : r).replace('.', ',');
+}
+
+// Nombre tapé : « 3,5 », « 3.5 m », « 30° »… NaN sinon.
+function lireNombre(s) {
+  const t = String(s ?? '').trim().replace(/,/g, '.').replace(/[\s°m]/g, '');
+  if (!t) return NaN;
+  const v = Number(t);
+  return Number.isFinite(v) ? v : NaN;
+}
+
+// Angle ramené dans ]-180 ; 180].
+function angle180(a) {
+  const r = ((((a + 180) % 360) + 360) % 360) - 180;
+  return r === -180 ? 180 : r;
+}
+
+function valide(cle, v) {
+  if (!Number.isFinite(v)) return false;
+  if (cle === 'b.longueur' || cle === 't.h' || cle === 'd.e') return v > 1e-6;
+  if (cle === 't.n') return v >= 1 && v <= 200;
+  return true;
+}
+
+// Flèches haut / bas : on reste dans les bornes.
+function borner(cle, v) {
+  if (cle === 't.n') return Math.min(200, Math.max(1, Math.round(v)));
+  if (cle === 'b.longueur' || cle === 'd.e') return Math.max(0.01, v);
+  if (cle === 't.h') return Math.max(0.05, v);
+  if (cle === 'b.angle' || cle === 'k.rot') return angle180(v);
+  return v;
+}
+
+// Bout qui reste en place quand on règle une barre : l'appui, puis le bout au sol, sinon le début.
+const poids = (n) => (APPUIS.has(n.type) ? 2 : 0) + (Math.abs(n.y) < 1e-6 ? 1 : 0);
+let boutFixe = null; // { id, bout } quand on a demandé l'autre bout
+
+const choisis = (f) => [...etat.sel].filter((id) => objet(id, f));
+
+// ---------- Morceaux de HTML ----------
+const titre = (svg, texte) => `<div class="bloc-titre">${svg}<span class="a-etiquette">${esc(texte)}</span></div>`;
+const bloc = (h) => `<section class="bloc">${h}</section>`;
+const discret = (t) => `<div class="a-discret">${esc(t)}</div>`;
+const rangee = (...b) => `<div class="rangee-boutons">${b.join('')}</div>`;
+
+function champ(libelle, cle, valeur, { id = '', unite = '', pas = '', extra = '' } = {}) {
+  const attrs = `data-champ="${cle}"` + (id ? ` data-id="${id}"` : '') + (pas !== '' ? ` data-pas="${pas}"` : '') + extra;
+  return `<label class="ligne-champ"><span>${esc(libelle)}</span><div class="avec-unite">`
+    + `<input class="a-champ" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" ${attrs} value="${esc(valeur)}">`
+    + (unite ? `<span>${esc(unite)}</span>` : '') + '</div></label>';
+}
+
+function champTexte(libelle, cle, valeur, { id = '', aide = '' } = {}) {
+  return `<label class="ligne-champ"><span>${esc(libelle)}</span>`
+    + `<input class="a-champ" type="text" autocomplete="off" spellcheck="true" lang="fr" data-champ="${cle}"${id ? ` data-id="${id}"` : ''}`
+    + `${aide ? ` placeholder="${esc(aide)}"` : ''} value="${esc(valeur)}"></label>`;
+}
+
+function bouton(act, nom, texte, classe = 'fantome', v = '', id = '') {
+  return `<button type="button" class="a-bouton ${classe}" data-act="${act}"${v !== '' ? ` data-v="${esc(v)}"` : ''}${id ? ` data-id="${id}"` : ''}>`
+    + `${picto(nom)}<span>${esc(texte)}</span></button>`;
+}
+
+function interrupteur(cle, nom, texte, on) {
+  return `<label class="interrupteur-ligne"><span>${picto(nom)}${esc(texte)}</span>`
+    + `<input type="checkbox" class="a-interrupteur" data-champ="${cle}"${on ? ' checked' : ''}></label>`;
+}
+
+function grilleTypesBarre(actif) {
+  return '<div class="grille-types">' + TYPES_BARRE.map(([id, nom]) =>
+    `<button type="button" class="type${id === actif ? ' on' : ''}" data-act="type-barre" data-v="${id}" title="${esc(nom)}">${picto(id)}<span>${esc(nom)}</span></button>`,
+  ).join('') + '</div>';
+}
+
+function grilleTypesNoeud(actif) {
+  return '<div class="grille-types trois">' + ORDRE_NOEUDS.map((id) =>
+    `<button type="button" class="type${id === actif ? ' on' : ''}" data-act="type-noeud" data-v="${id}" title="${esc(NOM_NOEUD[id])}">${picto('n-' + id)}<span>${esc(NOM_NOEUD[id])}</span></button>`,
+  ).join('') + '</div>';
+}
+
+const APERCUS = {
+  warren: 'M2 4H98M2 22H98M2 4V22M98 4V22M2 22L26 4L50 22L74 4L98 22',
+  warren_m: 'M2 4H98M2 22H98M2 4V22M98 4V22M2 22L26 4L50 22L74 4L98 22M26 4V22M50 4V22M74 4V22',
+  pratt: 'M2 4H98M2 22H98M2 4V22M26 4V22M50 4V22M74 4V22M98 4V22M2 4L26 22M26 4L50 22M74 4L50 22M98 4L74 22',
+  howe: 'M2 4H98M2 22H98M2 4V22M26 4V22M50 4V22M74 4V22M98 4V22M26 4L2 22M50 4L26 22M50 4L74 22M74 4L98 22',
+};
+
+function grilleFormes(actif, id = '') {
+  return '<div class="grille-types deux-col">' + FORMES_TREILLIS.map(([f, nom]) =>
+    `<button type="button" class="type${f === actif ? ' on' : ''}" data-act="forme" data-v="${f}"${id ? ` data-id="${id}"` : ''}>`
+    + `<svg class="apercu" viewBox="0 0 100 26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="${APERCUS[f] || APERCUS.warren}"/></svg>`
+    + `<span>${esc(nom)}</span></button>`,
+  ).join('') + '</div>';
+}
+
+// Réglages d'un treillis, d'une dalle ou d'une toile (sans barre : ceux du prochain tracé).
+function reglagesType(type, b = null) {
+  const id = b ? b.id : '';
+  const nom = (NOM_BARRE[type] || type) + (b ? '' : ' : prochain tracé');
+  if (type === 'treillis') {
+    const t = { ...etat.defauts.treillis, ...(b?.treillis || {}) };
+    return bloc(titre(picto('treillis'), nom) + grilleFormes(t.forme, id)
+      + champ('Hauteur', 't.h', nb(t.h), { id, unite: 'm', pas: 0.1 })
+      + champ('Panneaux', 't.n', nb(t.n, 0), { id, pas: 1 }));
+  }
+  if (type === 'dalle') {
+    const d = { ...etat.defauts.dalle, ...(b?.dalle || {}) };
+    return bloc(titre(picto('dalle'), nom) + champ('Épaisseur', 'd.e', nb(d.e), { id, unite: 'm', pas: 0.05 }));
+  }
+  if (type === 'toile') {
+    const o = { ...etat.defauts.toile, ...(b?.toile || {}) };
+    return bloc(titre(picto('toile'), nom) + champ('Flèche', 'o.fleche', nb(o.fleche), { id, unite: 'm', pas: 0.1 })
+      + discret('Creux de la toile au milieu. Retourner : bombée de l’autre côté.'));
+  }
+  return '';
+}
+
+const boutonsFin = (avecRetourner, avecSymetrie = true) => bloc(rangee(
+  avecRetourner ? bouton('retourner', 'echanger', 'Retourner') : '',
+  bouton('copier', 'dupliquer', 'Copier'),
+  avecSymetrie ? bouton('symetrie', 'miroir', 'Symétrie') : '',
+  bouton('effacer', 'supprimer', 'Effacer', 'danger'),
+));
+
+// ---------- Contenu selon la sélection ----------
+function blocNoeud(n, f) {
+  const relies = f.barres.filter((b) => b.a === n.id || b.b === n.id).length;
+  const pas = etat.pas || 0.1;
+  return bloc(titre(picto('n-' + n.type), 'Nœud')
+      + `<div class="gros">${esc(NOM_NOEUD[n.type] || n.type)}</div>`
+      + champ('X', 'n.x', nb(n.x), { id: n.id, unite: 'm', pas })
+      + champ('Y', 'n.y', nb(n.y), { id: n.id, unite: 'm', pas })
+      + discret('Y = 0 : le sol.'))
+    + bloc(titre(picto('n-appui'), 'Liaison') + grilleTypesNoeud(n.type) + discret('Barres reliées : ' + relies))
+    + bloc(rangee(bouton('effacer', 'supprimer', 'Effacer', 'danger')));
+}
+
+function blocBarre(b, f) {
+  const A = objet(b.a, f);
+  const B = objet(b.b, f);
+  if (!A || !B) return '';
+  const dx = B.x - A.x;
+  const dy = B.y - A.y;
+  const L = Math.hypot(dx, dy);
+  const ang = L > 1e-9 ? angle180(Math.atan2(dy, dx) / RAD) : 0;
+  const fixe = boutFixe?.id === b.id ? boutFixe.bout : (poids(B) > poids(A) ? 'b' : 'a');
+  const F = fixe === 'a' ? A : B;
+  const pas = etat.pas || 0.1;
+  const o = { id: b.id, extra: ` data-fixe="${fixe}"` };
+  return bloc(titre(picto(b.type), 'Barre')
+      + `<div class="gros">${esc(NOM_BARRE[b.type] || b.type)}</div>`
+      + discret(`De (${nb(A.x, 2)} ; ${nb(A.y, 2)}) à (${nb(B.x, 2)} ; ${nb(B.y, 2)})`)
+      + champ('Longueur', 'b.longueur', nb(L), { ...o, unite: 'm', pas })
+      + champ('Angle', 'b.angle', nb(ang, 2), { ...o, unite: '°', pas: 1 })
+      + champ('Largeur', 'b.dx', nb(dx), { ...o, unite: 'm', pas })
+      + champ('Hauteur', 'b.dy', nb(dy), { ...o, unite: 'm', pas })
+      + `<div class="interrupteur-ligne"><span>${picto('n-appui')}Fixe : (${nb(F.x, 2)} ; ${nb(F.y, 2)})</span>`
+      + `<button type="button" class="a-bouton fantome" data-act="bout-fixe" data-id="${b.id}" data-v="${fixe === 'a' ? 'b' : 'a'}">Changer</button></div>`
+      + discret('Ce bout reste en place, l’autre bouge.'))
+    + bloc(titre(picto('grille'), 'Type') + grilleTypesBarre(b.type))
+    + reglagesType(b.type, b)
+    + boutonsFin(RETOURNABLES.has(b.type));
+}
+
+function blocCote(c, f) {
+  const N = carteNoeuds(f);
+  const a = pointCote(c.a, N);
+  const b = pointCote(c.b, N);
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  return bloc(titre(picto('cote'), 'Cote')
+      + `<div class="gros">${esc(c.texte || nb(L, 2) + ' m')}</div>`
+      + champ('Décalage', 'c.decalage', nb(c.decalage ?? 1), { id: c.id, unite: 'm', pas: etat.pas || 0.1 })
+      + champTexte('Texte', 'c.texte', c.texte || '', { id: c.id, aide: nb(L, 2) })
+      + discret(`Mesure : ${nb(L, 3)} m. Texte vide : la mesure s’affiche.`))
+    + bloc(rangee(bouton('cote-inverser', 'miroir', 'Changer de côté'), bouton('effacer', 'supprimer', 'Effacer', 'danger')));
+}
+
+function blocTexte(t) {
+  const tailles = [[1, 'Petit'], [2, 'Moyen'], [3, 'Grand']].map(([v, nom]) =>
+    `<button type="button" class="${t.taille === v ? 'on' : ''}" data-act="taille" data-v="${v}">${nom}</button>`).join('');
+  return bloc(titre(picto('texte'), 'Texte')
+      + champTexte('Texte', 'x.texte', t.texte, { id: t.id })
+      + `<div class="ligne-champ"><span>Taille</span><div class="a-bascule bascule-pleine">${tailles}</div></div>`)
+    + boutonsFin(false, false);
+}
+
+function blocTrait(s) {
+  return bloc(titre(picto('crayon'), 'Trait à main levée') + discret(s.pts.length + ' points')) + boutonsFin(false);
+}
+
+function blocPlusieurs(ids, f) {
+  const NOMS = { b: ['barre', 'barres'], n: ['nœud', 'nœuds'], c: ['cote', 'cotes'], t: ['texte', 'textes'], s: ['trait', 'traits'] };
+  const compte = {};
+  for (const id of ids) compte[id[0]] = (compte[id[0]] || 0) + 1;
+  const detail = Object.keys(NOMS).filter((p) => compte[p]).map((p) => compte[p] + ' ' + NOMS[p][compte[p] > 1 ? 1 : 0]).join(' · ');
+  const barres = ids.filter((id) => id[0] === 'b').map((id) => objet(id, f));
+  const noeuds = ids.filter((id) => id[0] === 'n').map((id) => objet(id, f));
+  const memeB = barres.length && barres.every((b) => b.type === barres[0].type) ? barres[0].type : '';
+  const memeN = noeuds.length && noeuds.every((n) => n.type === noeuds[0].type) ? noeuds[0].type : '';
+  return bloc(titre(picto('selection'), 'Sélection') + `<div class="gros">${ids.length} éléments</div>` + discret(detail))
+    + (barres.length ? bloc(titre(picto('grille'), 'Type des barres') + grilleTypesBarre(memeB)) : '')
+    + (noeuds.length ? bloc(titre(picto('n-appui'), 'Liaison des nœuds') + grilleTypesNoeud(memeN)) : '')
+    + boutonsFin(barres.some((b) => RETOURNABLES.has(b.type)));
+}
+
+function aideOutil(id) {
+  if (NOM_BARRE[id]) {
+    if (id === 'treillis') return 'Clique le début, puis la fin : le treillis se dessine entre les deux.';
+    if (id === 'sol') return 'Clique le début du sol, puis la fin. Les hachures vont dessous.';
+    return 'Clique le début, puis la fin. Chaque clic continue la ligne. Double-clic ou Entrée pour finir. Pendant le tracé, tape 3.5 ; 30 puis Entrée : 3,5 m à 30°.';
+  }
+  if (id.startsWith('n-')) return 'Clique un nœud pour lui donner cette liaison.';
+  return {
+    selection: 'Clique un élément pour le régler ici, au millimètre.',
+    cote: 'Clique un premier point, puis le second. La cote suit les nœuds quand ils bougent.',
+    texte: 'Clique où poser le texte, écris, puis Entrée.',
+    crayon: 'Appuie et glisse pour dessiner à main levée.',
+    gomme: 'Clique sur ce que tu veux effacer.',
+  }[id] || '';
+}
+
+function blocOutil() {
+  const id = etat.outil || 'selection';
+  const aide = aideOutil(id);
+  return bloc(titre(picto(id), 'Outil') + `<div class="gros">${esc(nomOutil(id))}</div>` + (aide ? discret(aide) : ''))
+    + reglagesType(id);
+}
+
+function blocFeuille(f) {
+  const n = etat.doc.feuilles.length;
+  return bloc(titre(ico('fichier'), 'Feuille')
+    + champTexte('Nom', 'f.nom', f.nom)
+    + discret(`${f.barres.length} barres · ${f.noeuds.length} nœuds · ${f.cotes.length} cotes · ${f.textes.length} textes`)
+    + rangee(
+      enLigne ? bouton('feuille-svg', 'oeil', 'Télécharger le SVG')
+        : `<a class="a-bouton fantome" href="/planches/${encodeURIComponent(nomFichier(f, etat.fi))}" target="_blank" rel="noopener">${picto('oeil')}<span>Ouvrir le SVG</span></a>`,
+      n > 1 ? bouton('feuille-suppr', 'supprimer', etat.doc.feuilles.some((x) => x.groupe === f.groupe && x !== f) ? `Supprimer la V${f.v}` : 'Supprimer la feuille', 'danger') : '',
+    ));
+}
+
+function blocCroquis(f) {
+  const k = f.croquis;
+  const noms = etat.croquis || [];
+  const vignettes = noms.map((nom) =>
+    `<button type="button" class="vignette${k?.nom === nom ? ' on' : ''}" data-act="croquis" data-v="${esc(nom)}" title="${esc(nom)}">`
+    + `<img src="${urlCroquis(nom)}" alt="${esc(nom)}" loading="lazy" draggable="false"></button>`,
+  ).join('') + `<button type="button" class="vignette ajouter" data-act="croquis-ajouter" title="Ajouter une image">${ico('ajouter')}</button>`;
+  let h = titre(picto('image'), 'Croquis de fond') + `<div class="vignettes">${vignettes}</div>`;
+  if (!noms.length) h += discret('Aucune image pour l’instant. Glisse une image sur le dessin, ou colle-la (Ctrl+V).');
+  if (k) {
+    h += `<label class="ligne-champ"><span>Opacité</span><input type="range" min="0.1" max="1" step="0.05" data-champ="k.opacite" value="${+(k.opacite ?? 0.5)}"></label>`
+      + champ('Rotation', 'k.rot', nb(k.rot || 0, 2), { unite: '°', pas: 1 })
+      + rangee(bouton('croquis-tourner', 'tourner-g', '−90°', 'fantome', '-90'), bouton('croquis-tourner', 'tourner-d', '+90°', 'fantome', '90'))
+      + interrupteur('k.inverse', 'inverser', 'Inverser les couleurs', k.inverse)
+      + interrupteur('k.masque', 'oeil', 'Masquer', k.masque)
+      + rangee(
+        bouton('croquis-etalonner', 'etalonner', 'Étalonner', 'principal'),
+        bouton('croquis-deplacer', 'deplacer', 'Déplacer'),
+        bouton('croquis-retirer', 'supprimer', 'Retirer'),
+      )
+      + discret('Étalonner : clique 2 points du croquis dont tu connais la distance, puis tape-la.');
+  }
+  return bloc(h);
+}
+
+function blocGestes() {
+  const g = [
+    [['Clic'], 'Poser un point · choisir'],
+    [['Double-clic', 'Entrée'], 'Finir le tracé'],
+    [['Échap'], 'Arrêter · tout déchoisir'],
+    [['Espace', 'glisser'], 'Se déplacer (ou bouton du milieu)'],
+    [['Molette'], 'Zoomer'],
+    [['Maj'], 'Angles tous les 15°'],
+    [['Alt'], 'Sans aimant'],
+    [['3.5 ; 30'], 'Pendant un tracé : longueur ; angle'],
+    [['Flèches'], 'Déplacer ce qui est choisi (Maj : ×10)'],
+    [['Ctrl+Z', 'Ctrl+Y'], 'Annuler · rétablir'],
+    [['Ctrl+C', 'V', 'D'], 'Copier · coller · dupliquer'],
+    [['Suppr'], 'Effacer'],
+    [['F'], 'Tout voir'],
+    [['Lettres'], 'Outils (bulle sur chaque bouton)'],
+  ];
+  return bloc(titre(picto('aide'), 'Gestes') + '<div class="gestes">'
+    + g.map(([k, d]) => `<span>${k.map((x) => `<kbd>${esc(x)}</kbd>`).join(' ')}</span><span>${esc(d)}</span>`).join('')
+    + '</div>');
+}
+
+function contenu() {
+  const f = feuille();
+  if (!f || !etat.doc) return '';
+  const ids = choisis(f);
+  if (ids.length === 1) {
+    const o = objet(ids[0], f);
+    switch (ids[0][0]) {
+      case 'n': return blocNoeud(o, f);
+      case 'b': return blocBarre(o, f);
+      case 'c': return blocCote(o, f);
+      case 't': return blocTexte(o);
+      case 's': return blocTrait(o);
+      default:
+    }
+  }
+  if (ids.length > 1) return blocPlusieurs(ids, f);
+  return blocOutil() + blocFeuille(f) + blocCroquis(f) + blocGestes();
+}
+
+// ---------- Reconstruction (différée : pas de clic perdu, Tab passe au champ suivant) ----------
+let panneau = null;
+let prevu = false;
+let appui = false;
+let reconstruction = false;
+let photo = null; // positions des nœuds au début d'une saisie (pour Échap)
+
+export function dessinerPanneau() {
+  if (prevu) return;
+  prevu = true;
+  requestAnimationFrame(() => { if (!appui && prevu) construire(); });
+}
+
+function construire() {
+  prevu = false;
+  if (!panneau) return;
+  const a = document.activeElement;
+  const garde = a && panneau.contains(a) && a.dataset?.champ ? {
+    champ: a.dataset.champ, id: a.dataset.id || '', type: a.type, valeur: a.value,
+    debut: a.selectionStart, fin: a.selectionEnd, sale: a.dataset.sale, avant: a.dataset.avant,
+  } : null;
+  const haut = panneau.scrollTop;
+  reconstruction = true;
+  try {
+    panneau.innerHTML = contenu();
+    panneau.scrollTop = haut;
+    if (!garde) return;
+    const q = `[data-champ="${garde.champ}"]` + (garde.id ? `[data-id="${CSS.escape(garde.id)}"]` : ':not([data-id])');
+    const el = panneau.querySelector(q);
+    if (!el) return;
+    if (garde.sale && garde.type !== 'checkbox') el.value = garde.valeur;
+    el.focus({ preventScroll: true });
+    // Tout était choisi, ou la valeur a changé ailleurs : on choisit tout (la frappe remplace).
+    const tout = garde.debut === 0 && garde.fin === String(garde.valeur).length;
+    try {
+      if (garde.debut == null) { /* champ sans curseur */ } else if (tout || (!garde.sale && el.value !== garde.valeur)) el.select();
+      else el.setSelectionRange(Math.min(garde.debut, el.value.length), Math.min(garde.fin, el.value.length));
+    } catch { /* champ sans curseur */ }
+    if (garde.sale) el.dataset.sale = garde.sale;
+    el.dataset.avant = garde.sale ? (garde.avant ?? el.value) : el.value;
+    if (photo && photo.el === a) photo.el = el;
+  } finally {
+    reconstruction = false;
+  }
+}
+
+// ---------- Saisie dans les champs ----------
+const estChamp = (el) => el instanceof HTMLInputElement && !!el.dataset.champ && !!panneau && panneau.contains(el);
+
+function prendrePhoto(el) {
+  const f = feuille();
+  const o = el.dataset.id ? objet(el.dataset.id, f) : null;
+  if (!o) return null;
+  const ids = o.id[0] === 'n' ? [o.id] : o.id[0] === 'b' ? [o.a, o.b] : [];
+  const noeuds = ids.map((id) => objet(id, f)).filter(Boolean).map((n) => [n, n.x, n.y]);
+  return noeuds.length ? { el, noeuds } : null;
+}
+
+function remettrePhoto(el) {
+  if (!photo || photo.el !== el) return false;
+  for (const [n, x, y] of photo.noeuds) { n.x = x; n.y = y; }
+  synchroCotes(feuille());
+  return true;
+}
+
+// Saisie impossible : retour à la valeur d'avant.
+function revenir(el) {
+  if (remettrePhoto(el)) {
+    el.value = el.dataset.avant ?? el.value;
+    return true;
+  }
+  if (el.dataset.avant !== undefined && el.value !== el.dataset.avant) {
+    el.value = el.dataset.avant;
+    return appliquer(el, true);
+  }
+  return false;
+}
+
+// Met le modèle à jour depuis un champ. final = validation (Entrée, Tab, clic ailleurs).
+function appliquer(el, final) {
+  const f = feuille();
+  if (!f) return false;
+  const cle = el.dataset.champ;
+  const o = el.dataset.id ? objet(el.dataset.id, f) : null;
+  if (el.dataset.id && !o) return false;
+  const refus = () => (final ? revenir(el) : false);
+
+  if (cle === 'f.nom') {
+    f.nom = final ? el.value.trim() || 'Feuille ' + (etat.fi + 1) : el.value;
+    if (final) el.value = f.nom;
+    crochets.onglets?.();
+    return true;
+  }
+  if (cle === 'c.texte') {
+    const t = el.value.trim();
+    if (t) o.texte = t;
+    else delete o.texte;
+    return true;
+  }
+  if (cle === 'x.texte') {
+    if (final && !el.value.trim()) {
+      const i = f.textes.indexOf(o);
+      if (i >= 0) f.textes.splice(i, 1);
+      etat.sel.delete(o.id);
+      toast('Texte vide : effacé');
+      return true;
+    }
+    o.texte = el.value;
+    return true;
+  }
+
+  let v = lireNombre(el.value);
+  if (cle === 't.n') v = Math.round(v);
+  if (!valide(cle, v)) return refus();
+
+  if (cle === 'n.x' || cle === 'n.y') {
+    o[cle === 'n.x' ? 'x' : 'y'] = arr(v);
+    synchroCotes(f);
+    if (final) apresDeplacement([o.id], f);
+    return true;
+  }
+  if (BARRE.has(cle)) {
+    const A = objet(o.a, f);
+    const B = objet(o.b, f);
+    if (!A || !B) return false;
+    const auDebut = el.dataset.fixe !== 'b';
+    const F = auDebut ? A : B; // reste en place
+    const M = auDebut ? B : A; // bouge
+    const s = auDebut ? 1 : -1;
+    let dx = B.x - A.x;
+    let dy = B.y - A.y;
+    if (cle === 'b.longueur' || cle === 'b.angle') {
+      let L = Math.hypot(dx, dy);
+      let th = L > 1e-9 ? Math.atan2(dy, dx) : 0;
+      if (cle === 'b.longueur') L = v;
+      else th = angle180(v) * RAD;
+      if (!(L > 1e-9)) return refus();
+      dx = L * Math.cos(th);
+      dy = L * Math.sin(th);
+    } else if (cle === 'b.dx') dx = v;
+    else dy = v;
+    if (Math.hypot(dx, dy) < 1e-6) return refus();
+    M.x = arr(F.x + s * dx);
+    M.y = arr(F.y + s * dy);
+    synchroCotes(f);
+    if (final) apresDeplacement([M.id], f);
+    return true;
+  }
+  if (REGLAGES[cle]) {
+    const [type, k] = REGLAGES[cle];
+    const d = (etat.defauts[type] ||= {});
+    d[k] = k === 'fleche' ? Math.abs(v) : v;
+    if (o && o.type === type) o[type] = { ...d, ...(o[type] || {}), [k]: v };
+    return true;
+  }
+  if (cle === 'c.decalage') {
+    o.decalage = arr(v);
+    return true;
+  }
+  if (cle === 'k.opacite' || cle === 'k.rot') {
+    const k = f.croquis;
+    if (!k) return false;
+    if (cle === 'k.opacite') k.opacite = Math.min(1, Math.max(0.05, v));
+    else k.rot = arr(angle180(v));
+    return true;
+  }
+  return false;
+}
+
+function valider(el) {
+  delete el.dataset.sale;
+  appliquer(el, true);
+  el.dataset.avant = el.value;
+  if (document.activeElement === el) photo = prendrePhoto(el);
+  modifie();
+}
+
+function surFocusIn(ev) {
+  const el = ev.target;
+  if (reconstruction || !estChamp(el) || el.type === 'checkbox') return;
+  el.dataset.avant = el.value;
+  photo = prendrePhoto(el);
+}
+
+function surInput(ev) {
+  const el = ev.target;
+  if (!estChamp(el) || el.type === 'checkbox') return;
+  el.dataset.sale = '1';
+  if (appliquer(el, false)) demanderDessin();
+}
+
+function surChange(ev) {
+  const el = ev.target;
+  if (!estChamp(el) || el.dataset.annule) return;
+  if (el.type === 'checkbox') {
+    const k = feuille()?.croquis;
+    if (!k) return;
+    if (el.dataset.champ === 'k.inverse') k.inverse = el.checked;
+    if (el.dataset.champ === 'k.masque') k.masque = el.checked;
+    modifie();
+    return;
+  }
+  valider(el);
+}
+
+function surFocusOut(ev) {
+  const el = ev.target;
+  if (reconstruction || !(el instanceof HTMLInputElement) || !el.dataset.champ) return;
+  if (el.dataset.annule) { delete el.dataset.annule; return; }
+  if (el.dataset.sale) valider(el);
+}
+
+function surTouche(ev) {
+  const el = ev.target;
+  if (!estChamp(el) || el.type === 'checkbox') return;
+  if (ev.key === 'Enter') {
+    ev.preventDefault();
+    el.blur();
+    return;
+  }
+  if (ev.key === 'Escape') {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (el.dataset.sale) {
+      el.value = el.dataset.avant ?? el.value;
+      if (!remettrePhoto(el)) appliquer(el, false);
+      delete el.dataset.sale;
+    }
+    el.dataset.annule = '1';
+    el.blur();
+    rafraichir();
+    return;
+  }
+  if ((ev.key === 'ArrowUp' || ev.key === 'ArrowDown') && el.dataset.pas) {
+    ev.preventDefault();
+    const cle = el.dataset.champ;
+    let v = lireNombre(el.value);
+    if (!Number.isFinite(v)) v = lireNombre(el.dataset.avant);
+    if (!Number.isFinite(v)) v = 0;
+    const p = +el.dataset.pas * (ev.shiftKey ? 10 : 1);
+    v = borner(cle, Math.round((v + (ev.key === 'ArrowUp' ? p : -p)) / p) * p);
+    el.value = nb(v, cle === 't.n' ? 0 : 4);
+    el.dataset.sale = '1';
+    if (appliquer(el, false)) demanderDessin();
+  }
+}
+
+// ---------- Boutons ----------
+async function agir(act, v, el) {
+  const f = feuille();
+  if (!f) return;
+  const ids = choisis(f);
+  const de = (p) => ids.filter((id) => id[0] === p).map((id) => objet(id, f));
+  switch (act) {
+    case 'type-noeud': {
+      let n = 0;
+      for (const o of de('n')) if (o.type !== v) { o.type = v; n++; }
+      if (n) modifie();
+      return;
+    }
+    case 'type-barre': {
+      let n = 0;
+      for (const b of de('b')) {
+        if (b.type === v) continue;
+        delete b.treillis; delete b.dalle; delete b.toile; delete b.sol;
+        Object.assign(b, reglagesBarre(v));
+        b.type = v;
+        couperParNoeuds(b, f);
+        n++;
+      }
+      if (n) modifie();
+      return;
+    }
+    case 'forme': {
+      etat.defauts.treillis = { ...etat.defauts.treillis, forme: v };
+      const b = el.dataset.id ? objet(el.dataset.id, f) : null;
+      if (b?.type === 'treillis') {
+        b.treillis = { ...etat.defauts.treillis, ...b.treillis, forme: v };
+        modifie();
+      } else rafraichir();
+      return;
+    }
+    case 'bout-fixe':
+      boutFixe = { id: el.dataset.id, bout: v };
+      rafraichir();
+      return;
+    case 'retourner': retourner(ids.filter((id) => id[0] === 'b')); return;
+    case 'copier': copier(); return;
+    case 'symetrie': symetrie(); return;
+    case 'effacer': supprimerSelection(); return;
+    case 'taille': {
+      const [t] = de('t');
+      if (t && ids.length === 1) { t.taille = +v; modifie(); }
+      return;
+    }
+    case 'cote-inverser': {
+      const [c] = de('c');
+      if (c) { c.decalage = -(c.decalage ?? 1); modifie(); }
+      return;
+    }
+    case 'feuille-suppr': {
+      if (etat.doc.feuilles.length < 2) return;
+      if (!confirm(`Supprimer la feuille « ${f.nom} » ?\nCtrl+Z la fait revenir.`)) return;
+      crochets.finirAction?.();
+      const soeurs = etat.doc.feuilles.filter((x) => x.groupe === f.groupe && x !== f);
+      etat.doc.feuilles.splice(etat.fi, 1);
+      const voisine = soeurs.length ? etat.doc.feuilles.indexOf(soeurs[soeurs.length - 1]) : -1;
+      etat.fi = voisine >= 0 ? voisine : Math.min(etat.fi, etat.doc.feuilles.length - 1);
+      etat.sel.clear();
+      appliquerVue();
+      modifie();
+      return;
+    }
+    case 'croquis':
+      if (f.croquis?.nom !== v) await choisirFond(v); // même image : on garde l'étalonnage
+      return;
+    case 'feuille-svg': telecharger(nomFichier(f, etat.fi), svgPapier(f)); return;
+    case 'croquis-ajouter': document.getElementById('fichier-image')?.click(); return;
+    case 'croquis-tourner':
+      if (f.croquis) { f.croquis.rot = angle180((+f.croquis.rot || 0) + (+v || 0)); modifie(); }
+      return;
+    case 'croquis-etalonner': etalonnerCroquis(); return;
+    case 'croquis-deplacer': deplacerCroquis(); return;
+    case 'croquis-retirer':
+      if (f.croquis) { delete f.croquis; modifie(); }
+      return;
+    default:
+  }
+}
+
+function surClic(ev) {
+  const b = ev.target.closest?.('[data-act]');
+  if (!b || !panneau.contains(b) || b.disabled) return;
+  ev.preventDefault();
+  b.blur();
+  Promise.resolve(agir(b.dataset.act, b.dataset.v ?? '', b)).catch((e) => {
+    console.error(e);
+    toast('Erreur : ' + e.message, true);
+  });
+}
+
+// ---------- Démarrage ----------
+export function initPanneau() {
+  panneau = document.getElementById('panneau');
+  if (!panneau) return;
+  panneau.addEventListener('click', surClic);
+  panneau.addEventListener('input', surInput);
+  panneau.addEventListener('change', surChange);
+  panneau.addEventListener('keydown', surTouche);
+  panneau.addEventListener('focusin', surFocusIn);
+  panneau.addEventListener('focusout', surFocusOut);
+  // Bouton enfoncé dans le panneau : on attend qu'il soit relâché pour reconstruire.
+  panneau.addEventListener('pointerdown', () => { appui = true; }, true);
+  const relache = () => {
+    if (!appui) return;
+    appui = false;
+    setTimeout(() => { if (prevu) construire(); }, 0);
+  };
+  document.addEventListener('pointerup', relache, true);
+  document.addEventListener('pointercancel', relache, true);
+  window.addEventListener('blur', relache);
+  // Clic sur le dessin pendant une saisie : le champ est validé avant que le dessin reçoive le clic.
+  document.addEventListener('pointerdown', (ev) => {
+    const a = document.activeElement;
+    if (a && panneau.contains(a) && a.dataset?.champ && !panneau.contains(ev.target)) a.blur();
+  }, true);
+}

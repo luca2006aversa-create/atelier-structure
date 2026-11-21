@@ -1,0 +1,289 @@
+/* =====================================================================
+   charte.css — LA charte commune des interfaces de Luca (Ašru)
+   D:\Ezida\cerveau\charte\charte.css · exemple : exemple.html · mode d'emploi : LISEZMOI.md
+   Règle d'or : fond noir, texte blanc, UNE seule couleur (orange) pour action / actif / alerte.
+   Toutes les classes commencent par « a- » pour ne rien casser dans une appli existante.
+   ===================================================================== */
+
+/* 0. POLICE — Inter Tight en local (dossier polices/ à côté de ce fichier) */
+@font-face { font-family: 'Inter Tight'; font-style: normal; font-weight: 100 900; font-display: swap;
+  src: url(polices/inter-tight-vietnamese.woff2) format("woff2");
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'Inter Tight'; font-style: normal; font-weight: 100 900; font-display: swap;
+  src: url(polices/inter-tight-latin-ext.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'Inter Tight'; font-style: normal; font-weight: 100 900; font-display: swap;
+  src: url(polices/inter-tight-latin.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+/* =====================================================================
+   1. VARIABLES — la palette Ašru (noms inchangés, déjà utilisés par Maurice)
+   ===================================================================== */
+:root {
+  /* couleurs */
+  --noir: #000;            /* fond de page */
+  --surface: #0e0e0e;      /* cartes */
+  --surface2: #171717;     /* cartes dans les cartes, survol, fond des jauges */
+  --ligne: #2a2a2a;        /* traits, bordures */
+  --blanc: #fff;           /* texte principal, données */
+  --gris: #8c8c8c;         /* texte secondaire (contraste 6,4:1 sur noir) */
+  --gris2: #5a5a5a;        /* données de fond, axes, désactivé — jamais pour du texte à lire */
+  --orange: #ff5a1f;       /* LA couleur : action, état actif, alerte */
+  --orange-doux: rgba(255, 90, 31, .14);
+  --sur-orange: #000;      /* texte posé sur l'orange */
+
+  /* états : pas de 2e couleur tant que Luca ne l'a pas validée */
+  --ok: var(--blanc);
+  --alerte: var(--orange);
+
+  /* formes */
+  --r: 12px;               /* rayon des cartes */
+  --r-petit: 8px;
+  --r-rond: 999px;
+  --toucher: 44px;         /* taille mini d'un bouton (doigt) */
+
+  /* espaces : 4 · 8 · 12 · 16 · 24 · 32 */
+  --e1: 4px; --e2: 8px; --e3: 12px; --e4: 16px; --e5: 24px; --e6: 32px;
+
+  /* typo — pensée dyslexie : grand, aéré, jamais d'italique ni de justifié */
+  --police: "Inter Tight", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --police-code: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --t-petit: 13px;         /* étiquettes */
+  --t-corps: 16px;         /* texte normal */
+  --t-titre: 22px;
+  --t-chiffre: 40px;       /* les gros chiffres */
+  --interligne: 1.55;
+
+  color-scheme: dark;
+}
+
+/* =====================================================================
+   2. BASE
+   ===================================================================== */
+.a-page, .a-page * { box-sizing: border-box; }
+.a-page {
+  margin: 0; min-height: 100vh;
+  background: var(--noir); color: var(--blanc);
+  font-family: var(--police); font-size: var(--t-corps); line-height: var(--interligne);
+  letter-spacing: .01em; word-spacing: .04em;
+  -webkit-font-smoothing: antialiased; text-align: left;
+}
+.a-page em, .a-page i:not([class]) { font-style: normal; font-weight: 600; }   /* pas d'italique */
+.a-page button, .a-page input, .a-page select, .a-page textarea { font: inherit; color: inherit; }
+.a-page ::selection { background: var(--orange); color: var(--sur-orange); }
+.a-page :focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+.a-page p { max-width: 60ch; }                         /* lignes courtes = lecture facile */
+.a-page code { font-family: var(--police-code); font-size: .9em; background: var(--surface2); padding: 1px 6px; border-radius: 5px; }
+
+.a-titre   { font-size: var(--t-titre); font-weight: 700; letter-spacing: -.01em; line-height: 1.2; margin: 0; }
+.a-etiquette { font-size: var(--t-petit); font-weight: 600; color: var(--gris); text-transform: uppercase; letter-spacing: .07em; }
+.a-discret { color: var(--gris); }
+.a-chiffre { font-size: var(--t-chiffre); font-weight: 700; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.a-chiffre small { font-size: .4em; font-weight: 600; color: var(--gris); margin-left: 4px; letter-spacing: 0; }
+
+/* mise en page */
+.a-grille { display: grid; gap: var(--e4); grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); }
+.a-rangee { display: flex; flex-wrap: wrap; align-items: center; gap: var(--e2); }
+.a-pile   { display: flex; flex-direction: column; gap: var(--e3); }
+
+/* =====================================================================
+   3. BOUTONS
+   ===================================================================== */
+.a-bouton {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--e2);
+  min-height: var(--toucher); padding: 0 var(--e4);
+  border-radius: var(--r-petit); border: 1px solid var(--ligne);
+  background: var(--surface2); color: var(--blanc);
+  font-weight: 600; cursor: pointer; text-decoration: none; white-space: nowrap;
+  transition: background .15s, border-color .15s, transform .1s;
+}
+.a-bouton:hover  { border-color: var(--blanc); }
+.a-bouton:active { transform: scale(.97); }
+.a-bouton:disabled { background: var(--surface); color: var(--gris2); border-color: var(--surface2); cursor: default; transform: none; }
+.a-bouton.principal { background: var(--orange); border-color: var(--orange); color: var(--sur-orange); }
+.a-bouton.principal:hover { filter: brightness(1.1); }
+.a-bouton.fantome { background: none; border-color: transparent; color: var(--gris); }
+.a-bouton.fantome:hover { color: var(--blanc); background: var(--surface2); }
+.a-bouton.danger { background: none; border-color: var(--orange); color: var(--orange); }
+.a-bouton.rond { width: var(--toucher); padding: 0; border-radius: 50%; font-size: 18px; }
+.a-bouton.carre { width: var(--toucher); padding: 0; font-size: 18px; }
+
+/* pastilles (filtres, choix) */
+.a-pastille {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 var(--e3);
+  border-radius: var(--r-rond); border: 1px solid var(--ligne); background: none; color: var(--blanc);
+  font-size: var(--t-petit); font-weight: 600; cursor: pointer;
+}
+.a-pastille:hover { border-color: var(--blanc); }
+.a-pastille.on { background: var(--blanc); color: var(--noir); border-color: var(--blanc); }
+.a-pastille.orange { border-color: var(--orange); color: var(--orange); }
+
+/* bascule (2 à 4 choix) */
+.a-bascule { display: inline-flex; padding: 3px; gap: 2px; background: var(--surface); border: 1px solid var(--ligne); border-radius: var(--r-rond); }
+.a-bascule button { min-height: 36px; padding: 0 var(--e4); border: 0; border-radius: var(--r-rond); background: none; color: var(--gris); font-weight: 600; cursor: pointer; }
+.a-bascule button.on { background: var(--blanc); color: var(--noir); }
+
+/* interrupteur */
+.a-interrupteur { appearance: none; width: 48px; height: 28px; border-radius: var(--r-rond); background: var(--surface2); border: 1px solid var(--ligne); position: relative; cursor: pointer; flex: none; transition: background .15s; }
+.a-interrupteur::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--gris); transition: transform .15s, background .15s; }
+.a-interrupteur:checked { background: var(--orange); border-color: var(--orange); }
+.a-interrupteur:checked::after { transform: translateX(20px); background: var(--noir); }
+
+/* champ de saisie */
+.a-champ { width: 100%; min-height: var(--toucher); padding: 0 var(--e3); background: var(--surface); border: 1px solid var(--ligne); border-radius: var(--r-petit); color: var(--blanc); outline: none; }
+textarea.a-champ { padding: var(--e3); min-height: 88px; resize: vertical; }
+.a-champ::placeholder { color: var(--gris); }
+.a-champ:focus { border-color: var(--orange); }
+
+/* =====================================================================
+   4. CARTES
+   ===================================================================== */
+.a-carte { background: var(--surface); border: 1px solid var(--ligne); border-radius: var(--r); padding: var(--e4); display: flex; flex-direction: column; gap: var(--e3); min-width: 0; }
+.a-carte.creuse { background: var(--surface2); border-color: transparent; }
+.a-carte.active { border-color: var(--orange); }
+.a-carte.cliquable { cursor: pointer; transition: border-color .15s; }
+.a-carte.cliquable:hover { border-color: var(--blanc); }
+.a-carte-tete { display: flex; align-items: center; gap: var(--e2); }
+.a-carte-tete .a-etiquette { flex: 1; }
+/* icônes au trait (icones.js) : couleur = texte ; dans une carte, pastille sobre */
+svg.a-icone { width: 1.15em; height: 1.15em; vertical-align: -0.2em; flex: none; }
+.a-carte-tete > svg.a-icone, .a-pastille { width: 40px; height: 40px; padding: 9px; background: var(--surface2); border-radius: 10px; color: var(--blanc); }
+/* ancien : à remplacer par une icône */
+.a-emoji { font-size: 22px; line-height: 1; width: 40px; height: 40px; display: grid; place-items: center; background: var(--surface2); border-radius: 10px; flex: none; }
+
+/* variation d'un chiffre : ▲ monte (blanc) · ▼ baisse (orange = à regarder) */
+.a-variation { font-size: var(--t-petit); font-weight: 700; }
+.a-variation.monte::before { content: "▲ "; }
+.a-variation.baisse { color: var(--orange); }
+.a-variation.baisse::before { content: "▼ "; }
+
+/* point d'état */
+.a-point { width: 10px; height: 10px; border-radius: 50%; background: var(--gris2); display: inline-block; flex: none; }
+.a-point.ok { background: var(--ok); }
+.a-point.actif { background: var(--orange); animation: a-pouls 1.2s infinite; }
+.a-point.alerte { background: var(--alerte); }
+@keyframes a-pouls { 0%,100% { box-shadow: 0 0 0 0 rgba(255,90,31,.55); } 50% { box-shadow: 0 0 0 7px rgba(255,90,31,0); } }
+
+/* bandeau d'alerte */
+.a-bandeau { display: flex; align-items: center; gap: var(--e3); padding: var(--e3) var(--e4); border-radius: var(--r); background: var(--orange-doux); border: 1px solid var(--orange); font-weight: 600; }
+.a-bandeau.info { background: var(--surface2); border-color: var(--ligne); }
+
+/* =====================================================================
+   5. ONGLETS + barre du bas (téléphone)
+   ===================================================================== */
+.a-onglets { display: flex; gap: var(--e1); border-bottom: 1px solid var(--ligne); overflow-x: auto; scrollbar-width: none; }
+.a-onglets::-webkit-scrollbar { display: none; }
+.a-onglets button, .a-onglets a {
+  display: inline-flex; align-items: center; gap: var(--e2); min-height: var(--toucher); padding: 0 var(--e4);
+  background: none; border: 0; border-bottom: 3px solid transparent; margin-bottom: -1px;
+  color: var(--gris); font-weight: 600; cursor: pointer; white-space: nowrap; text-decoration: none;
+}
+.a-onglets button:hover, .a-onglets a:hover { color: var(--blanc); }
+.a-onglets .on { color: var(--blanc); border-bottom-color: var(--orange); }
+
+/* sur téléphone, mettre la navigation en bas, à portée du pouce */
+.a-barre-bas { display: none; }
+@media (max-width: 640px) {
+  .a-barre-bas {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+    background: var(--surface); border-top: 1px solid var(--ligne);
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+  }
+  .a-barre-bas button, .a-barre-bas a {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 52px; justify-content: center;
+    background: none; border: 0; border-radius: var(--r-petit); color: var(--gris); font-size: 11px; font-weight: 600; text-decoration: none;
+  }
+  .a-barre-bas .ico { font-size: 22px; line-height: 1; }
+  .a-barre-bas .on { color: var(--orange); }
+  .a-page.avec-barre-bas { padding-bottom: 76px; }
+}
+
+/* =====================================================================
+   6. JAUGES
+   ===================================================================== */
+/* barre : <div class="a-jauge" style="--v:62"><i></i></div>   (--v = 0 à 100) */
+.a-jauge { height: 12px; border-radius: var(--r-rond); background: var(--surface2); overflow: hidden; }
+.a-jauge > i { display: block; height: 100%; width: calc(var(--v, 0) * 1%); background: var(--blanc); border-radius: inherit; transition: width .4s; }
+.a-jauge.orange > i, .a-jauge.alerte > i { background: var(--orange); }
+.a-jauge.fine { height: 6px; }
+.a-jauge.epaisse { height: 20px; }
+
+/* jauge en marches (niveau 0 à 5) : <div class="a-niveau" data-v="3"><i></i><i></i><i></i><i></i><i></i></div> */
+.a-niveau { display: flex; gap: 4px; --plein: var(--blanc); }
+.a-niveau.orange { --plein: var(--orange); }
+.a-niveau > i { flex: 1; height: 12px; border-radius: 3px; background: var(--surface2); }
+.a-niveau[data-v="1"] > i:nth-child(-n+1), .a-niveau[data-v="2"] > i:nth-child(-n+2), .a-niveau[data-v="3"] > i:nth-child(-n+3),
+.a-niveau[data-v="4"] > i:nth-child(-n+4), .a-niveau[data-v="5"] > i:nth-child(-n+5) { background: var(--plein); }
+
+/* anneau : <div class="a-anneau" style="--v:72"><b>72%</b></div> */
+.a-anneau {
+  --taille: 112px; --epaisseur: 12px;
+  width: var(--taille); height: var(--taille); border-radius: 50%; flex: none;
+  display: grid; place-items: center; position: relative;
+  background: conic-gradient(var(--couleur, var(--blanc)) calc(var(--v, 0) * 1%), var(--surface2) 0);
+}
+.a-anneau::before { content: ""; position: absolute; inset: var(--epaisseur); border-radius: 50%; background: var(--surface); }
+.a-anneau > * { position: relative; font-size: calc(var(--taille) * .22); font-weight: 700; letter-spacing: -.02em; line-height: 1; text-align: center; }
+.a-anneau small { display: block; font-size: 11px; color: var(--gris); font-weight: 600; letter-spacing: .04em; margin-top: 3px; }
+.a-anneau.orange, .a-anneau.alerte { --couleur: var(--orange); }
+.a-anneau.petit { --taille: 64px; --epaisseur: 7px; }
+.a-anneau.grand { --taille: 160px; --epaisseur: 16px; }
+.a-carte.creuse .a-anneau::before { background: var(--surface2); }
+.a-carte.creuse .a-anneau { background: conic-gradient(var(--couleur, var(--blanc)) calc(var(--v, 0) * 1%), var(--ligne) 0); }
+
+/* =====================================================================
+   7. GRAPHIQUES (sans bibliothèque)
+   ===================================================================== */
+/* barres : <div class="a-barres"><i style="--v:40" data-n="L"></i>…</div>  — ajouter .on à la barre du jour */
+.a-barres { display: flex; align-items: flex-end; gap: 6px; height: 120px; padding-bottom: 20px; position: relative; }
+.a-barres > i { flex: 1; height: calc(var(--v, 0) * 1%); min-height: 3px; background: var(--gris2); border-radius: 4px 4px 2px 2px; position: relative; transition: height .4s; }
+.a-barres > i.on { background: var(--orange); }
+.a-barres > i::after { content: attr(data-n); position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 4px; font-size: 11px; color: var(--gris); font-style: normal; }
+.a-barres > i:hover { background: var(--blanc); }
+.a-barres > i[title]:hover::before { content: attr(title); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 4px; padding: 2px 6px; border-radius: 5px; background: var(--blanc); color: var(--noir); font-size: 11px; font-weight: 700; font-style: normal; white-space: nowrap; }
+
+/* courbe : un <svg class="a-courbe" viewBox="0 0 100 30" preserveAspectRatio="none"> avec
+   <path class="aire"/> <path class="trait"/> <circle class="dernier"/> */
+.a-courbe { width: 100%; height: 64px; display: block; overflow: visible; }
+.a-courbe .trait { fill: none; stroke: var(--blanc); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+.a-courbe .aire { fill: var(--blanc); opacity: .07; }
+.a-courbe .seuil { stroke: var(--orange); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.a-courbe .dernier { fill: var(--orange); }
+.a-courbe.orange .trait { stroke: var(--orange); }
+.a-courbe.orange .aire { fill: var(--orange); opacity: .12; }
+
+/* répartition (barre empilée) : <div class="a-repartition"><i style="--v:50"></i><i style="--v:30"></i><i style="--v:20"></i></div> */
+.a-repartition { display: flex; height: 16px; gap: 3px; }
+.a-repartition > i { width: calc(var(--v, 0) * 1%); background: var(--gris2); border-radius: 4px; }
+.a-repartition > i:nth-child(1) { background: var(--blanc); }
+.a-repartition > i:nth-child(2) { background: var(--gris); }
+.a-repartition > i.on { background: var(--orange); }
+
+/* légende : <div class="a-legende"><span><i class="c1"></i>Claude</span>…</div> */
+.a-legende { display: flex; flex-wrap: wrap; gap: var(--e2) var(--e4); font-size: var(--t-petit); color: var(--gris); }
+.a-legende span { display: inline-flex; align-items: center; gap: 6px; }
+.a-legende i { width: 10px; height: 10px; border-radius: 3px; background: var(--gris2); }
+.a-legende i.c1 { background: var(--blanc); } .a-legende i.c2 { background: var(--gris); } .a-legende i.orange { background: var(--orange); }
+
+/* carte de chaleur (calendrier) : <div class="a-chaleur"><i data-v="0"></i>…</div>  (data-v = 0 à 4) */
+.a-chaleur { display: grid; grid-template-columns: repeat(var(--colonnes, 14), 1fr); gap: 3px; }
+.a-chaleur > i { aspect-ratio: 1; border-radius: 3px; background: var(--surface2); }
+.a-chaleur > i[data-v="1"] { background: #3a3a3a; }
+.a-chaleur > i[data-v="2"] { background: #6a6a6a; }
+.a-chaleur > i[data-v="3"] { background: #b5b5b5; }
+.a-chaleur > i[data-v="4"] { background: var(--blanc); }
+.a-chaleur > i.on { outline: 2px solid var(--orange); outline-offset: 1px; }
+
+/* =====================================================================
+   8. TÉLÉPHONE
+   ===================================================================== */
+@media (max-width: 640px) {
+  :root { --t-corps: 17px; --t-titre: 20px; --t-chiffre: 34px; }   /* un peu plus gros au doigt */
+  .a-grille { grid-template-columns: 1fr; gap: var(--e3); }
+  .a-carte { padding: var(--e3) var(--e4); }
+}
+
+/* moins d'animations si le système le demande */
+@media (prefers-reduced-motion: reduce) {
+  .a-page *, .a-page *::before, .a-page *::after { animation: none !important; transition: none !important; }
+}
