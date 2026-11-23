@@ -1,5 +1,5 @@
 // Rendu SVG : à l'écran (pixels, fond noir) et sur papier (mètres, fond blanc, pour les planches).
-import { primitivesFeuille, boitePrims, boite, borne, fr } from './geometrie.js';
+import { primitivesFeuille, boitePrims, boite, borne, fr, estPlan } from './geometrie.js';
 
 export const TXT_PX = { 1: 15, 2: 20, 3: 28 };
 export const ORANGE = '#ff5a1f';
@@ -36,6 +36,20 @@ const ECRAN = {
   'cote-txt': { f: '#fff' },
   texte: { f: '#fff' },
   trait: { s: '#8c8c8c', w: 1.75 },
+  // Plan
+  murp: { f: '#cfcfcf' },
+  cloison: { f: '#7d7d7d' },
+  porte: { s: '#fff', w: 2.5 },
+  'porte-arc': { s: '#8c8c8c', w: 1 },
+  fenetre: { s: '#fff', w: 1.25 },
+  vitre: { s: '#fff', w: 1 },
+  escalier: { s: '#fff', w: 1.25 },
+  marche: { s: '#8c8c8c', w: 1 },
+  foulee: { s: '#fff', w: 1.25 },
+  trame: { s: '#5a5a5a', w: 1, d: [14, 4, 2, 4] },
+  'trame-rond': { s: '#8c8c8c', w: 1.25, f: '#000' },
+  'trame-txt': { f: '#fff' },
+  'poteau-plan': { s: '#000', w: 1, f: '#fff' },
 };
 
 const PAPIER = {
@@ -61,6 +75,20 @@ const PAPIER = {
   'cote-txt': { f: '#000', g: 600 },
   texte: { f: '#000' },
   trait: { s: '#888', w: 1.3 },
+  // Plan : murs en poché noir, cloisons en gris
+  murp: { f: '#000' },
+  cloison: { f: '#6e6e6e' },
+  porte: { s: '#000', w: 2 },
+  'porte-arc': { s: '#000', w: 0.8 },
+  fenetre: { s: '#000', w: 1 },
+  vitre: { s: '#000', w: 0.8 },
+  escalier: { s: '#000', w: 1 },
+  marche: { s: '#000', w: 0.7 },
+  foulee: { s: '#000', w: 1 },
+  trame: { s: '#888', w: 0.8, d: [14, 4, 2, 4] },
+  'trame-rond': { s: '#000', w: 1, f: '#fff' },
+  'trame-txt': { f: '#000', g: 600 },
+  'poteau-plan': { s: '#fff', w: 0.8, f: '#000' },
 };
 
 export const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -128,7 +156,7 @@ export function svgPapier(f) {
   const taille = Math.max(b0.x1 - b0.x0, b0.y1 - b0.y0, 2);
   const su = borne(taille / 45, 0.02, 3);
   const prims = primitivesFeuille(f, echelle(18 / su), false);
-  if (!f.barres.some((b) => b.type === 'sol') && f.noeuds.some((n) => Math.abs(n.y) < 1e-3)) {
+  if (!estPlan(f) && !f.barres.some((b) => b.type === 'sol') && f.noeuds.some((n) => Math.abs(n.y) < 1e-3)) {
     prims.unshift({ k: 'l', st: 'sol', id: 'sol0', p: [[b0.x0 - 2 * su, 0], [b0.x1 + 2 * su, 0]] });
   }
   const bb = boitePrims(prims) || { x0: -5, y0: 0, x1: 5, y1: 5 };

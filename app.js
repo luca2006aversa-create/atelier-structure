@@ -4,13 +4,14 @@ import {
   annuler, retablir, appliquerVue, allerFeuille, toast, uid, memoriserVue,
 } from './etat.js';
 import { initScene, demanderDessin, zoomerCentre, cadrerVue } from './scene.js';
-import { initOutils, finirAction } from './outils.js';
+import { initOutils, finirAction, majModeOutils } from './outils.js';
 import { initPanneau, dessinerPanneau } from './panneau.js';
 import { poserPictos } from './pictos.js';
 import { chargerListe, envoyerImage } from './croquis.js';
 import { charger, planifier, feuilleVide, tourPartage, etatSauvegarde } from './sauvegarde.js';
 import { brancherFinir } from './commandes.js';
 import { Vue3D } from './vue3d.js';
+import { dessinerCalcul } from './calcul.js';
 import { enLigne } from './mode.js';
 import { ecouter, verifierCode, retenirCode, session, peutEcrire } from './partage.js';
 import { trier, copie } from './fusion.js';
@@ -54,6 +55,8 @@ function onglets() {
     if (ouverte?.groupe === nom) b.className = 'on';
     box.appendChild(b);
   }
+  // L'onglet ouvert reste visible, même au bout d'une longue rangée.
+  box.querySelector('button.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   // Versions de la feuille ouverte
   vbox.textContent = '';
   for (const f of g.get(ouverte?.groupe) || []) {
@@ -116,13 +119,34 @@ function brancherOnglets() {
       if (c) { c.focus(); c.select(); }
     }));
   });
-  $('b-feuille').addEventListener('click', () => {
+  // « + » : petit menu pour choisir une coupe (portique) ou un plan (vue de dessus).
+  const menu = $('menu-feuille');
+  const fermerMenu = () => { menu.hidden = true; $('b-feuille').setAttribute('aria-expanded', 'false'); };
+  $('b-feuille').addEventListener('click', (ev) => {
+    ev.stopPropagation();
     if (!etat.doc) return;
+    if (!menu.hidden) { fermerMenu(); return; }
+    const r = $('b-feuille').getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(r.left, document.documentElement.clientWidth - 230)) + 'px';
+    menu.style.top = r.bottom + 6 + 'px';
+    menu.hidden = false;
+    $('b-feuille').setAttribute('aria-expanded', 'true');
+  });
+  document.addEventListener('pointerdown', (ev) => {
+    if (!menu.hidden && !menu.contains(ev.target) && !$('b-feuille').contains(ev.target)) fermerMenu();
+  });
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !menu.hidden) fermerMenu(); });
+  menu.addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-type]');
+    if (!b) return;
+    fermerMenu();
+    const type = b.dataset.type;
+    const base = type === 'plan' ? 'Plan ' : 'Feuille ';
     const noms = new Set(etat.doc.feuilles.map((f) => f.nom));
-    let n = groupes().size + 1;
-    while (noms.has('Feuille ' + n)) n++;
+    let n = type === 'plan' ? 1 : groupes().size + 1;
+    while (noms.has(base + n)) n++;
     const ordre = Math.max(0, ...etat.doc.feuilles.map((f) => f.ordre ?? 0)) + 1;
-    const f = feuilleVide('Feuille ' + n, ordre);
+    const f = feuilleVide(base + n, ordre, type);
     etat.doc.feuilles.push(f);
     trier(etat.doc.feuilles);
     allerId(f.id);
@@ -174,6 +198,7 @@ function boutons() {
   const r = $('b-retablir');
   if (a) a.disabled = !peutAnnuler();
   if (r) r.disabled = !peutRetablir();
+  majModeOutils(); // coupe ou plan : la barre d'outils suit la feuille
 }
 
 // ---------- Taille de la scène ----------
@@ -226,6 +251,11 @@ function brancherReglages() {
 const carte = () => $('carte3d');
 
 function champs3D() {
+  const plan = feuille()?.type === 'plan';
+  // Sur un plan, la 3D monte les murs à la hauteur de la feuille : pas d'entraxe ni de nombre.
+  for (const id of ['entraxe', 'nombre']) $(id).closest('label').hidden = plan;
+  $('hauteur3d').hidden = !plan;
+  if (plan) $('hauteur3d').textContent = 'Murs : ' + String(feuille().etage || 2.7).replace('.', ',') + ' m de haut';
   const t = feuille()?.trois_d || { entraxe: 6, nombre: 4 };
   for (const [id, v] of [['entraxe', t.entraxe], ['nombre', t.nombre]]) {
     const el = $(id);
@@ -293,6 +323,30 @@ function brancher3D() {
       if (ev.key === 'Enter' || ev.key === 'Escape') el.blur();
     });
   }
+}
+
+// ---------- Note de calcul ----------
+let calculFait = false;
+
+function basculerCalcul(ouvrir = $('calcul').hidden) {
+  const box = $('calcul');
+  if (ouvrir && !calculFait) {
+    dessinerCalcul(box);
+    calculFait = true;
+  }
+  box.hidden = !ouvrir;
+  $('b-calcul-fermer').hidden = !ouvrir;
+  $('b-calcul').classList.toggle('principal', ouvrir);
+  $('b-calcul').setAttribute('aria-pressed', String(ouvrir));
+  if (ouvrir) box.scrollTop = 0;
+}
+
+function brancherCalcul() {
+  $('b-calcul').addEventListener('click', () => basculerCalcul());
+  $('b-calcul-fermer').addEventListener('click', () => basculerCalcul(false));
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !$('calcul').hidden) { ev.stopPropagation(); basculerCalcul(false); }
+  }, true);
 }
 
 // ---------- Croquis : dossier, fichier, glisser-déposer ----------
@@ -387,6 +441,7 @@ async function demarrer() {
   brancherOnglets();
   brancherReglages();
   brancher3D();
+  brancherCalcul();
   brancherCroquis();
   brancherPartage();
   mesurer();

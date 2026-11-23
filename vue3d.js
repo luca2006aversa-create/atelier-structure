@@ -1,5 +1,8 @@
 // Vue 3D : le portique de la feuille est répété le long de z (entraxe × nombre), vu en perspective.
-import { primitivesBarre, carteNoeuds, borne } from './geometrie.js';
+import {
+  primitivesBarre, carteNoeuds, borne, estPlan, analysePlan, bandeMur, epaisseur, MURS,
+  H_PORTE, H_ALLEGE, H_LINTEAU, sub, add, mul, unite, normale, dist,
+} from './geometrie.js';
 
 const PRINCIPAL = new Set(['poteau', 'poutre', 'bequille', 'membrure', 'dalle']);
 const SECONDAIRE = new Set(['diagonale', 'entretoise', 'cable', 'toile']);
@@ -113,12 +116,12 @@ export class Vue3D {
     ctx.fillStyle = '#0e0e0e';
     ctx.fillRect(0, 0, w, h);
     const { feuille, sel } = this.fournir();
-    const M = feuille ? modele3D(feuille) : { segs: [], faces: [] };
+    const M = !feuille ? { segs: [], faces: [] } : estPlan(feuille) ? modelePlan(feuille) : modele3D(feuille);
     if (!M.segs.length) {
       ctx.fillStyle = '#8c8c8c';
       ctx.font = '14px "Inter Tight", sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('Dessine des barres pour voir la 3D', w / 2, h / 2);
+      ctx.fillText(estPlan(feuille) ? 'Dessine des murs pour voir la 3D' : 'Dessine des barres pour voir la 3D', w / 2, h / 2);
       return;
     }
     const mn = [Infinity, Infinity, Infinity];
@@ -191,4 +194,96 @@ export class Vue3D {
     for (const s of M.segs) if (sel.has(s.id)) trait(s.a, s.b, '#ff5a1f', 2);
     ctx.globalAlpha = 1;
   }
+}
+
+// ---------- Plan : les murs montent du sol à la hauteur de la feuille ----------
+// Le plan (x, y) devient la 3D (x, hauteur, y) : vu de dessus, le nord reste en haut, sans effet miroir.
+function boite3D(pied, z0, z1, role, id, segs, faces, st = 'mur') {
+  const n = pied.length;
+  const bas = pied.map(([x, y]) => [x, z0, y]);
+  const haut = pied.map(([x, y]) => [x, z1, y]);
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    segs.push({ a: bas[i], b: bas[j], role, id }, { a: haut[i], b: haut[j], role, id }, { a: bas[i], b: haut[i], role, id });
+    faces.push({ pts: [bas[i], bas[j], haut[j], haut[i]], id, st });
+  }
+  if (n === 4) faces.push({ pts: haut, id, st });
+}
+
+const pied = (A, B, e) => {
+  const u = unite(sub(B, A));
+  const n = mul(normale(u), e / 2);
+  return [add(A, n), add(B, n), sub(B, n), sub(A, n)];
+};
+
+export function modelePlan(f) {
+  const N = carteNoeuds(f);
+  const J = analysePlan(f, N);
+  const H = Math.max(0.5, +f.etage || 2.7);
+  const segs = [];
+  const faces = [];
+  const pt = (id) => { const n = N.get(id); return n ? [n.x, n.y] : null; };
+  for (const b of f.barres) {
+    const A = pt(b.a);
+    const B = pt(b.b);
+    if (!A || !B || dist(A, B) < 1e-6) continue;
+    const role = b.type === 'cloison' ? 'secondaire' : 'principal';
+    if (MURS.has(b.type)) {
+      const o = J.cache.get(b.id);
+      if (!o) { boite3D(bandeMur(b, A, B, J, N), 0, H, role, b.id, segs, faces); continue; }
+      // Morceau de mur sous une ouverture : il reste le linteau (et l'allège pour une fenêtre).
+      const p = pied(A, B, epaisseur(b));
+      if (H > H_PORTE && o.type === 'porte') boite3D(p, Math.min(H_PORTE, H), H, role, b.id, segs, faces);
+      if (o.type === 'fenetre') {
+        boite3D(p, 0, Math.min(H_ALLEGE, H), role, b.id, segs, faces);
+        if (H > H_LINTEAU) boite3D(p, H_LINTEAU, H, role, b.id, segs, faces);
+      }
+    } else if (b.type === 'fenetre') {
+      const h0 = Math.min(H_ALLEGE, H);
+      const h1 = Math.min(H_LINTEAU, H);
+      const c = [[A[0], h0, A[1]], [B[0], h0, B[1]], [B[0], h1, B[1]], [A[0], h1, A[1]]];
+      for (let i = 0; i < 4; i++) segs.push({ a: c[i], b: c[(i + 1) % 4], role: 'secondaire', id: b.id });
+      faces.push({ pts: c, id: b.id, st: 'vitre' });
+    } else if (b.type === 'porte') {
+      const h1 = Math.min(H_PORTE, H);
+      const c = [[A[0], 0, A[1]], [A[0], h1, A[1]], [B[0], h1, B[1]], [B[0], 0, B[1]]];
+      for (let i = 0; i < 3; i++) segs.push({ a: c[i], b: c[i + 1], role: 'secondaire', id: b.id });
+    } else if (b.type === 'escalier') {
+      // Les marches montent du départ jusqu'à la hauteur de la feuille.
+      const s = b.escalier || {};
+      const [D, F] = s.sens === -1 ? [B, A] : [A, B];
+      const L = dist(D, F);
+      const u = unite(sub(F, D));
+      const nm = mul(normale(u), Math.max(0.2, +s.w || 1.2) / 2);
+      const nb = Math.max(1, Math.min(400, Math.round(L / Math.max(0.1, +s.giron || 0.28))));
+      const g = L / nb;
+      const hm = H / nb;
+      for (const cote of [nm, mul(nm, -1)]) {
+        const d0 = add(D, cote);
+        const pts = [[d0[0], 0, d0[1]]];
+        for (let i = 0; i < nb; i++) {
+          const q = add(add(D, cote), mul(u, i * g));
+          const r = add(add(D, cote), mul(u, (i + 1) * g));
+          pts.push([q[0], (i + 1) * hm, q[1]], [r[0], (i + 1) * hm, r[1]]);
+        }
+        const fin = add(F, cote);
+        pts.push([fin[0], 0, fin[1]], pts[0]);
+        for (let i = 0; i < pts.length - 1; i++) segs.push({ a: pts[i], b: pts[i + 1], role: 'secondaire', id: b.id });
+      }
+      for (let i = 0; i < nb; i++) {
+        const q = add(D, mul(u, i * g));
+        const a = add(q, nm);
+        const c = sub(q, nm);
+        segs.push({ a: [a[0], (i + 1) * hm, a[1]], b: [c[0], (i + 1) * hm, c[1]], role: 'secondaire', id: b.id });
+      }
+    } else if (b.type === 'trame') {
+      segs.push({ a: [A[0], 0, A[1]], b: [B[0], 0, B[1]], role: 'site', id: b.id });
+    }
+  }
+  for (const n of f.noeuds) {
+    if (n.type !== 'poteau') continue;
+    const h = Math.max(0.05, +n.s || 0.3) / 2;
+    boite3D([[n.x - h, n.y - h], [n.x + h, n.y - h], [n.x + h, n.y + h], [n.x - h, n.y + h]], 0, H, 'principal', n.id, segs, faces);
+  }
+  return { segs, faces };
 }

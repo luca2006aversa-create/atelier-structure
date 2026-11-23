@@ -1,7 +1,7 @@
 // Panneau de droite : réglages précis de ce qui est choisi.
 // Rien de choisi : l'outil en cours, la feuille, le croquis de fond et les gestes.
 import { etat, feuille, modifie, rafraichir, toast, crochets, appliquerVue } from './etat.js';
-import { TYPES_BARRE, FORMES_TREILLIS, NOM_BARRE, NOM_NOEUD, carteNoeuds, pointCote } from './geometrie.js';
+import { TYPES_BARRE, FORMES_TREILLIS, NOM_BARRE, NOM_NOEUD, BARRES_PLAN, carteNoeuds, pointCote, estPlan } from './geometrie.js';
 import { supprimerSelection, retourner, copier, symetrie, reglagesBarre } from './commandes.js';
 import { apresDeplacement, synchroCotes, couperParNoeuds } from './topologie.js';
 import { choisirFond, urlCroquis } from './croquis.js';
@@ -20,10 +20,16 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 const arr = (v) => Math.round(v * 1e6) / 1e6;
 const RAD = Math.PI / 180;
 const APPUIS = new Set(['appui', 'encastrement', 'glissant']);
-const RETOURNABLES = new Set(['treillis', 'dalle', 'toile', 'sol']);
+const RETOURNABLES = new Set(['treillis', 'dalle', 'toile', 'sol', 'porte', 'escalier']);
 const ORDRE_NOEUDS = ['appui', 'encastrement', 'rotule', 'rigide', 'glissant', 'libre'];
-const REGLAGES = { 't.h': ['treillis', 'h'], 't.n': ['treillis', 'n'], 'd.e': ['dalle', 'e'], 'o.fleche': ['toile', 'fleche'] };
+const ORDRE_NOEUDS_PLAN = ['poteau', 'libre'];
+const REGLAGES = {
+  't.h': ['treillis', 'h'], 't.n': ['treillis', 'n'], 'd.e': ['dalle', 'e'], 'o.fleche': ['toile', 'fleche'],
+  'm.e': ['murp', 'e'], 'cl.e': ['cloison', 'e'], 'es.w': ['escalier', 'w'], 'es.giron': ['escalier', 'giron'],
+};
 const BARRE = new Set(['b.longueur', 'b.angle', 'b.dx', 'b.dy']);
+// Valeurs qui doivent rester plus grandes que zéro (longueur, épaisseurs, largeur, section, hauteur d'étage).
+const POSITIFS = new Set(['b.longueur', 't.h', 'd.e', 'm.e', 'cl.e', 'es.w', 'p.s', 'f.etage']);
 
 // Nombre affiché : virgule, sans zéros inutiles, jamais « -0 ».
 function nb(v, d = 3) {
@@ -48,7 +54,8 @@ function angle180(a) {
 
 function valide(cle, v) {
   if (!Number.isFinite(v)) return false;
-  if (cle === 'b.longueur' || cle === 't.h' || cle === 'd.e') return v > 1e-6;
+  if (POSITIFS.has(cle)) return v > 1e-6;
+  if (cle === 'es.giron') return v >= 0.1;
   if (cle === 't.n') return v >= 1 && v <= 200;
   return true;
 }
@@ -56,8 +63,9 @@ function valide(cle, v) {
 // Flèches haut / bas : on reste dans les bornes.
 function borner(cle, v) {
   if (cle === 't.n') return Math.min(200, Math.max(1, Math.round(v)));
-  if (cle === 'b.longueur' || cle === 'd.e') return Math.max(0.01, v);
   if (cle === 't.h') return Math.max(0.05, v);
+  if (cle === 'es.giron') return Math.max(0.1, v);
+  if (POSITIFS.has(cle)) return Math.max(0.01, v);
   if (cle === 'b.angle' || cle === 'k.rot') return angle180(v);
   return v;
 }
@@ -81,10 +89,10 @@ function champ(libelle, cle, valeur, { id = '', unite = '', pas = '', extra = ''
     + (unite ? `<span>${esc(unite)}</span>` : '') + '</div></label>';
 }
 
-function champTexte(libelle, cle, valeur, { id = '', aide = '' } = {}) {
+function champTexte(libelle, cle, valeur, { id = '', aide = '', max = 0 } = {}) {
   return `<label class="ligne-champ"><span>${esc(libelle)}</span>`
     + `<input class="a-champ" type="text" autocomplete="off" spellcheck="true" lang="fr" data-champ="${cle}"${id ? ` data-id="${id}"` : ''}`
-    + `${aide ? ` placeholder="${esc(aide)}"` : ''} value="${esc(valeur)}"></label>`;
+    + `${aide ? ` placeholder="${esc(aide)}"` : ''}${max ? ` maxlength="${max}"` : ''} value="${esc(valeur)}"></label>`;
 }
 
 function bouton(act, nom, texte, classe = 'fantome', v = '', id = '') {
@@ -97,14 +105,15 @@ function interrupteur(cle, nom, texte, on) {
     + `<input type="checkbox" class="a-interrupteur" data-champ="${cle}"${on ? ' checked' : ''}></label>`;
 }
 
-function grilleTypesBarre(actif) {
-  return '<div class="grille-types">' + TYPES_BARRE.map(([id, nom]) =>
+// Types proposés : ceux de la coupe, ou ceux du plan.
+function grilleTypesBarre(actif, plan = false) {
+  return `<div class="grille-types${plan ? ' trois' : ''}">` + TYPES_BARRE.filter(([id]) => BARRES_PLAN.has(id) === plan).map(([id, nom]) =>
     `<button type="button" class="type${id === actif ? ' on' : ''}" data-act="type-barre" data-v="${id}" title="${esc(nom)}">${picto(id)}<span>${esc(nom)}</span></button>`,
   ).join('') + '</div>';
 }
 
-function grilleTypesNoeud(actif) {
-  return '<div class="grille-types trois">' + ORDRE_NOEUDS.map((id) =>
+function grilleTypesNoeud(actif, plan = false) {
+  return `<div class="grille-types ${plan ? 'deux-col' : 'trois'}">` + (plan ? ORDRE_NOEUDS_PLAN : ORDRE_NOEUDS).map((id) =>
     `<button type="button" class="type${id === actif ? ' on' : ''}" data-act="type-noeud" data-v="${id}" title="${esc(NOM_NOEUD[id])}">${picto('n-' + id)}<span>${esc(NOM_NOEUD[id])}</span></button>`,
   ).join('') + '</div>';
 }
@@ -143,6 +152,28 @@ function reglagesType(type, b = null) {
     return bloc(titre(picto('toile'), nom) + champ('Flèche', 'o.fleche', nb(o.fleche), { id, unite: 'm', pas: 0.1 })
       + discret('Creux de la toile au milieu. Retourner : bombée de l’autre côté.'));
   }
+  // Plan
+  if (type === 'murp' || type === 'cloison') {
+    const m = { e: type === 'murp' ? 0.2 : 0.1, ...(etat.defauts[type] || {}), ...(b?.[type] || {}) };
+    return bloc(titre(picto(type), nom)
+      + champ('Épaisseur', type === 'murp' ? 'm.e' : 'cl.e', nb(m.e), { id, unite: 'm', pas: type === 'murp' ? 0.05 : 0.01 }));
+  }
+  if (type === 'porte' && b) {
+    return bloc(titre(picto('porte'), nom) + rangee(bouton('porte-charniere', 'porte', 'Changer la charnière'))
+      + discret('Retourner : elle s’ouvre de l’autre côté. Charnière : elle tourne sur l’autre bout.'));
+  }
+  if (type === 'fenetre' && b) return bloc(titre(picto('fenetre'), nom) + discret('La fenêtre prend l’épaisseur du mur.'));
+  if (type === 'escalier') {
+    const s = { w: 1.2, giron: 0.28, ...(etat.defauts.escalier || {}), ...(b?.escalier || {}) };
+    return bloc(titre(picto('escalier'), nom)
+      + champ('Largeur', 'es.w', nb(s.w), { id, unite: 'm', pas: 0.1 })
+      + champ('Giron', 'es.giron', nb(s.giron), { id, unite: 'm', pas: 0.01 })
+      + discret(b ? 'Giron : profondeur d’une marche. La flèche monte ; Retourner : elle descend.' : 'Giron : profondeur d’une marche.'));
+  }
+  if (type === 'trame' && b) {
+    return bloc(titre(picto('trame'), nom) + champTexte('Nom', 'tr.nom', b.trame?.nom || '', { id, max: 3 })
+      + discret('Lettre ou chiffre de la bulle (3 signes au plus).'));
+  }
   return '';
 }
 
@@ -155,14 +186,17 @@ const boutonsFin = (avecRetourner, avecSymetrie = true) => bloc(rangee(
 
 // ---------- Contenu selon la sélection ----------
 function blocNoeud(n, f) {
+  const plan = estPlan(f);
   const relies = f.barres.filter((b) => b.a === n.id || b.b === n.id).length;
   const pas = etat.pas || 0.1;
   return bloc(titre(picto('n-' + n.type), 'Nœud')
       + `<div class="gros">${esc(NOM_NOEUD[n.type] || n.type)}</div>`
       + champ('X', 'n.x', nb(n.x), { id: n.id, unite: 'm', pas })
       + champ('Y', 'n.y', nb(n.y), { id: n.id, unite: 'm', pas })
-      + discret('Y = 0 : le sol.'))
-    + bloc(titre(picto('n-appui'), 'Liaison') + grilleTypesNoeud(n.type) + discret('Barres reliées : ' + relies))
+      + (n.type === 'poteau' ? champ('Section', 'p.s', nb(n.s || 0.3), { id: n.id, unite: 'm', pas: 0.05 }) : '')
+      + (plan ? '' : discret('Y = 0 : le sol.')))
+    + bloc(titre(picto(plan ? 'n-poteau' : 'n-appui'), plan ? 'Type' : 'Liaison') + grilleTypesNoeud(n.type, plan)
+      + discret((plan ? 'Éléments reliés : ' : 'Barres reliées : ') + relies))
     + bloc(rangee(bouton('effacer', 'supprimer', 'Effacer', 'danger')));
 }
 
@@ -178,17 +212,18 @@ function blocBarre(b, f) {
   const F = fixe === 'a' ? A : B;
   const pas = etat.pas || 0.1;
   const o = { id: b.id, extra: ` data-fixe="${fixe}"` };
-  return bloc(titre(picto(b.type), 'Barre')
+  const plan = estPlan(f);
+  return bloc(titre(picto(b.type), plan ? 'Élément' : 'Barre')
       + `<div class="gros">${esc(NOM_BARRE[b.type] || b.type)}</div>`
       + discret(`De (${nb(A.x, 2)} ; ${nb(A.y, 2)}) à (${nb(B.x, 2)} ; ${nb(B.y, 2)})`)
       + champ('Longueur', 'b.longueur', nb(L), { ...o, unite: 'm', pas })
       + champ('Angle', 'b.angle', nb(ang, 2), { ...o, unite: '°', pas: 1 })
-      + champ('Largeur', 'b.dx', nb(dx), { ...o, unite: 'm', pas })
-      + champ('Hauteur', 'b.dy', nb(dy), { ...o, unite: 'm', pas })
+      + champ(plan ? 'Largeur (X)' : 'Largeur', 'b.dx', nb(dx), { ...o, unite: 'm', pas })
+      + champ(plan ? 'Profondeur (Y)' : 'Hauteur', 'b.dy', nb(dy), { ...o, unite: 'm', pas })
       + `<div class="interrupteur-ligne"><span>${picto('n-appui')}Fixe : (${nb(F.x, 2)} ; ${nb(F.y, 2)})</span>`
       + `<button type="button" class="a-bouton fantome" data-act="bout-fixe" data-id="${b.id}" data-v="${fixe === 'a' ? 'b' : 'a'}">Changer</button></div>`
       + discret('Ce bout reste en place, l’autre bouge.'))
-    + bloc(titre(picto('grille'), 'Type') + grilleTypesBarre(b.type))
+    + bloc(titre(picto('grille'), 'Type') + grilleTypesBarre(b.type, plan))
     + reglagesType(b.type, b)
     + boutonsFin(RETOURNABLES.has(b.type));
 }
@@ -228,13 +263,25 @@ function blocPlusieurs(ids, f) {
   const noeuds = ids.filter((id) => id[0] === 'n').map((id) => objet(id, f));
   const memeB = barres.length && barres.every((b) => b.type === barres[0].type) ? barres[0].type : '';
   const memeN = noeuds.length && noeuds.every((n) => n.type === noeuds[0].type) ? noeuds[0].type : '';
+  const plan = estPlan(f);
   return bloc(titre(picto('selection'), 'Sélection') + `<div class="gros">${ids.length} éléments</div>` + discret(detail))
-    + (barres.length ? bloc(titre(picto('grille'), 'Type des barres') + grilleTypesBarre(memeB)) : '')
-    + (noeuds.length ? bloc(titre(picto('n-appui'), 'Liaison des nœuds') + grilleTypesNoeud(memeN)) : '')
+    + (barres.length ? bloc(titre(picto('grille'), plan ? 'Type des éléments' : 'Type des barres') + grilleTypesBarre(memeB, plan)) : '')
+    + (noeuds.length ? bloc(titre(picto(plan ? 'n-poteau' : 'n-appui'), plan ? 'Type des nœuds' : 'Liaison des nœuds') + grilleTypesNoeud(memeN, plan)) : '')
     + boutonsFin(barres.some((b) => RETOURNABLES.has(b.type)));
 }
 
+const AIDES_PLAN = {
+  murp: 'Clique le début du mur, puis la suite. Les coins se raccordent tout seuls. Double-clic ou Entrée pour finir.',
+  cloison: 'Clique le début de la cloison, puis la suite. Les coins se raccordent tout seuls. Double-clic ou Entrée pour finir.',
+  porte: 'Clique les deux bouts de la porte, sur un mur. Le mur s’ouvre tout seul.',
+  fenetre: 'Clique les deux bouts de la fenêtre, sur un mur.',
+  trame: 'Clique le début de l’axe, puis la fin. La bulle se met au début.',
+  escalier: 'Clique le bas, puis le haut. La flèche montre la montée.',
+  'n-poteau': 'Clique pour poser un poteau (grille, nœud ou mur).',
+};
+
 function aideOutil(id) {
+  if (AIDES_PLAN[id]) return AIDES_PLAN[id];
   if (NOM_BARRE[id]) {
     if (id === 'treillis') return 'Clique le début, puis la fin : le treillis se dessine entre les deux.';
     if (id === 'sol') return 'Clique le début du sol, puis la fin. Les hachures vont dessous.';
@@ -259,9 +306,14 @@ function blocOutil() {
 
 function blocFeuille(f) {
   const n = etat.doc.feuilles.length;
+  const plan = estPlan(f);
+  const types = [['coupe', 'Coupe'], ['plan', 'Plan']].map(([v, nom]) =>
+    `<button type="button" class="${(v === 'plan') === plan ? 'on' : ''}" data-act="feuille-type" data-v="${v}">${nom}</button>`).join('');
   return bloc(titre(ico('fichier'), 'Feuille')
     + champTexte('Nom', 'f.nom', f.nom)
-    + discret(`${f.barres.length} barres · ${f.noeuds.length} nœuds · ${f.cotes.length} cotes · ${f.textes.length} textes`)
+    + `<div class="ligne-champ"><span>Type</span><div class="a-bascule bascule-pleine">${types}</div></div>`
+    + (plan ? champ('Hauteur des murs', 'f.etage', nb(f.etage ?? 2.7), { unite: 'm', pas: 0.1 }) : '')
+    + discret(`${f.barres.length} ${plan ? 'éléments' : 'barres'} · ${f.noeuds.length} nœuds · ${f.cotes.length} cotes · ${f.textes.length} textes`)
     + rangee(
       enLigne ? bouton('feuille-svg', 'oeil', 'Télécharger le SVG')
         : `<a class="a-bouton fantome" href="/planches/${encodeURIComponent(nomFichier(f, etat.fi))}" target="_blank" rel="noopener">${picto('oeil')}<span>Ouvrir le SVG</span></a>`,
@@ -445,6 +497,12 @@ function appliquer(el, final) {
     o.texte = el.value;
     return true;
   }
+  if (cle === 'tr.nom') {
+    const t = el.value.trim().slice(0, 3);
+    if (t && o) o.trame = { ...(o.trame || {}), nom: t };
+    if (final) el.value = o?.trame?.nom || ''; // vide : on garde l'ancien nom
+    return true;
+  }
 
   let v = lireNombre(el.value);
   if (cle === 't.n') v = Math.round(v);
@@ -488,6 +546,15 @@ function appliquer(el, final) {
     const d = (etat.defauts[type] ||= {});
     d[k] = k === 'fleche' ? Math.abs(v) : v;
     if (o && o.type === type) o[type] = { ...d, ...(o[type] || {}), [k]: v };
+    return true;
+  }
+  if (cle === 'p.s') {
+    if (!o || o.id[0] !== 'n') return false;
+    o.s = arr(v);
+    return true;
+  }
+  if (cle === 'f.etage') {
+    f.etage = arr(v);
     return true;
   }
   if (cle === 'c.decalage') {
@@ -599,13 +666,36 @@ async function agir(act, v, el) {
       let n = 0;
       for (const b of de('b')) {
         if (b.type === v) continue;
-        delete b.treillis; delete b.dalle; delete b.toile; delete b.sol;
-        Object.assign(b, reglagesBarre(v));
+        for (const [t] of TYPES_BARRE) delete b[t]; // on oublie les réglages de l'ancien type
+        const A = objet(b.a, f);
+        const B = objet(b.b, f);
+        Object.assign(b, reglagesBarre(v, A && [A.x, A.y], B && [B.x, B.y]));
         b.type = v;
         couperParNoeuds(b, f);
         n++;
       }
       if (n) modifie();
+      return;
+    }
+    case 'porte-charniere': {
+      let n = 0;
+      for (const b of de('b')) {
+        if (b.type !== 'porte') continue;
+        b.porte = { sens: 1, ...(b.porte || {}), charniere: b.porte?.charniere === 'b' ? 'a' : 'b' };
+        n++;
+      }
+      if (n) modifie();
+      return;
+    }
+    case 'feuille-type': {
+      const plan = v === 'plan';
+      if (estPlan(f) === plan) return;
+      crochets.finirAction?.();
+      f.type = plan ? 'plan' : 'coupe';
+      if (plan && !(f.etage > 0)) f.etage = 2.7;
+      etat.sel.clear();
+      modifie();
+      toast(plan ? 'Feuille en plan : vue de dessus, outils du plan' : 'Feuille en coupe : outils de la coupe');
       return;
     }
     case 'forme': {

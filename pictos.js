@@ -47,6 +47,17 @@ const T = {
   'n-appui': P('M12 3v9|M12 12l-4.5 6h9z|M5 21h14'),
   'n-encastrement': P('M12 3v12|M5 15h14|M8 15l-2 4M12 15l-2 4M16 15l-2 4M20 15l-2 4'),
   'n-glissant': P('M12 3v9|M12 12l-4.5 5h9z|M6 20h12'),
+  // Plan (vue de dessus)
+  murp: R(3, 8.5, 18, 7, 0.5) + P('M8 8.5l-4 7|M14 8.5l-4 7|M20 8.5l-4 7'),
+  cloison: R(3, 10.5, 18, 3, 0.5),
+  'n-poteau': R(8, 8, 8, 8, 0.5) + P('M8 8l8 8M16 8l-8 8'),
+  porte: P('M2 20h6|M8 20V8|M8 8a12 12 0 0 1 12 12|M20 20h2'),
+  fenetre: R(3, 9, 18, 6, 0.5) + P('M3 12h18'),
+  trame: TIRETS('M9.5 12H22', '4 2 1 2', C(6, 12, 3.5)),
+  escalier: R(6, 3, 12, 18, 0.5) + P('M6 7.5h12M6 12h12M6 16.5h12|M12 19V5M9.5 7.5L12 5l2.5 2.5'),
+  // Types de feuille
+  'f-coupe': P('M2 20h20|M5 20V10l7-6 7 6v10|M5 13h14'),
+  'f-plan': R(3, 4, 18, 16, 0.5) + P('M12 4v6M12 14v6|M12 10a4 4 0 0 1 4 4'),
 };
 
 export function picto(nom, classe = '') {

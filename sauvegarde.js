@@ -192,9 +192,14 @@ const num = (v, d) => (fini(v) ? +v : d);
 const liste = (l, p) => (Array.isArray(l) ? l.filter((o) => o && typeof o.id === 'string' && o.id[0] === p) : []);
 const bout = (e) => e && fini(e.x) && fini(e.y);
 
-export function feuilleVide(nom, ordre = 0) {
+const positif = (v, d) => (fini(v) && +v > 0 ? +v : d);
+
+// type : 'coupe' (vue de côté) ou 'plan' (vue de dessus, avec la hauteur des murs pour la 3D).
+export function feuilleVide(nom, ordre = 0, type = 'coupe') {
   const id = uid('f');
-  return { id, groupe: id, v: 1, ordre, nom, noeuds: [], barres: [], cotes: [], textes: [], traits: [], trois_d: { entraxe: 6, nombre: 4 } };
+  const f = { id, groupe: id, v: 1, ordre, nom, noeuds: [], barres: [], cotes: [], textes: [], traits: [], trois_d: { entraxe: 6, nombre: 4 } };
+  if (type === 'plan') { f.type = 'plan'; f.etage = 2.7; }
+  return f;
 }
 
 function reparer(doc) {
@@ -204,8 +209,14 @@ function reparer(doc) {
     const f = { ...f0 };
     if (typeof f.id !== 'string' || f.id[0] !== 'f') f.id = uid('f');
     f.nom = String(f.nom || 'Feuille');
+    if (f.type !== 'plan' && f.type !== 'coupe') delete f.type;
+    if (f.type === 'plan' || f.etage !== undefined) f.etage = positif(f.etage, 2.7);
     f.noeuds = liste(f.noeuds, 'n').filter((n) => fini(n.x) && fini(n.y))
-      .map((n) => ({ ...n, x: +n.x, y: +n.y, type: IDS_NOEUD.has(n.type) ? n.type : 'libre' }));
+      .map((n) => {
+        const r = { ...n, x: +n.x, y: +n.y, type: IDS_NOEUD.has(n.type) ? n.type : 'libre' };
+        if (r.type === 'poteau') r.s = positif(n.s, 0.3);
+        return r;
+      });
     const ids = new Set(f.noeuds.map((n) => n.id));
     f.barres = liste(f.barres, 'b').filter((b) => ids.has(b.a) && ids.has(b.b)).map((b) => {
       const r = { ...b, type: IDS_BARRE.has(b.type) ? b.type : 'poutre' };
@@ -218,6 +229,13 @@ function reparer(doc) {
       if (r.type === 'dalle') r.dalle = { ...etat.defauts.dalle, ...(b.dalle || {}) };
       if (r.type === 'toile') r.toile = { ...etat.defauts.toile, ...(b.toile || {}) };
       if (r.type === 'sol') r.sol = { sens: 1, ...(b.sol || {}) };
+      if (r.type === 'murp' || r.type === 'cloison') r[r.type] = { ...(b[r.type] || {}), e: positif(b[r.type]?.e, r.type === 'murp' ? 0.2 : 0.1) };
+      if (r.type === 'porte') r.porte = { sens: b.porte?.sens === -1 ? -1 : 1, charniere: b.porte?.charniere === 'b' ? 'b' : 'a' };
+      if (r.type === 'escalier') {
+        const s = b.escalier || {};
+        r.escalier = { ...s, w: positif(s.w, 1.2), giron: Math.max(0.1, positif(s.giron, 0.28)), sens: s.sens === -1 ? -1 : 1 };
+      }
+      if (r.type === 'trame') r.trame = { nom: String(b.trame?.nom ?? '').slice(0, 3) };
       return r;
     });
     f.cotes = liste(f.cotes, 'c').filter((c) => bout(c.a) && bout(c.b))

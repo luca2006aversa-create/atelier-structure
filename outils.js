@@ -1,6 +1,6 @@
 // Outils : colonne des outils, gestes à la souris et au doigt, clavier, presse-papiers.
 import { etat, feuille, trouver, retirer, uid, modifie, rafraichir, toast, versMonde, versEcran, annuler, retablir } from './etat.js';
-import { NOM_BARRE, NOM_NOEUD, chercher, simplifier, carteNoeuds, pointCote, dist, add, sub, fr } from './geometrie.js';
+import { NOM_BARRE, NOM_NOEUD, chercher, simplifier, carteNoeuds, pointCote, dist, add, sub, fr, estPlan } from './geometrie.js';
 import { accrocher } from './accroche.js';
 import { EPS, obtenirNoeud, couperParNoeuds, nettoyerBarres, noeudsRelies, synchroCotes, apresDeplacement } from './topologie.js';
 import { brancherPointeur, demanderDessin, zoomer, zoomerCentre, decaler, cadrerVue, decalageCote } from './scene.js';
@@ -12,22 +12,38 @@ import { etalonner, envoyerImage } from './croquis.js';
 import { sauver } from './sauvegarde.js';
 import { picto } from './pictos.js';
 
-// [id, étiquette courte, touche]
-const GROUPES = [
-  ['Outils', [['selection', 'Choisir', 'V'], ['gomme', 'Gomme', 'G'], ['cote', 'Cote', 'C'], ['texte', 'Texte', 'T'], ['crayon', 'Crayon', 'D']]],
-  ['Barres', [['poteau', 'Poteau', 'P'], ['poutre', 'Poutre', 'B'], ['bequille', 'Béquille', 'Q'], ['entretoise', 'Entretoise', 'E']]],
-  ['Spécial', [['treillis', 'Treillis', 'R'], ['cable', 'Câble'], ['toile', 'Toile'], ['dalle', 'Dalle']]],
-  ['Site', [['sol', 'Sol', 'S'], ['mur', 'Mur', 'M']]],
-  ['Nœuds', [['n-appui', 'Appui'], ['n-encastrement', 'Encastré'], ['n-rotule', 'Rotule'], ['n-rigide', 'Rigide'], ['n-glissant', 'Glissant'], ['n-libre', 'Libre']]],
-];
+// [id, étiquette courte, touche] — une colonne pour les coupes, une pour les plans.
+const COMMUNS = ['Outils', [['selection', 'Choisir', 'V'], ['gomme', 'Gomme', 'G'], ['cote', 'Cote', 'C'], ['texte', 'Texte', 'T'], ['crayon', 'Crayon', 'D']]];
+const GROUPES = {
+  coupe: [
+    COMMUNS,
+    ['Barres', [['poteau', 'Poteau', 'P'], ['poutre', 'Poutre', 'B'], ['bequille', 'Béquille', 'Q'], ['entretoise', 'Entretoise', 'E']]],
+    ['Spécial', [['treillis', 'Treillis', 'R'], ['cable', 'Câble'], ['toile', 'Toile'], ['dalle', 'Dalle']]],
+    ['Site', [['sol', 'Sol', 'S'], ['mur', 'Mur', 'M']]],
+    ['Nœuds', [['n-appui', 'Appui'], ['n-encastrement', 'Encastré'], ['n-rotule', 'Rotule'], ['n-rigide', 'Rigide'], ['n-glissant', 'Glissant'], ['n-libre', 'Libre']]],
+  ],
+  plan: [
+    COMMUNS,
+    ['Plan', [['murp', 'Mur', 'M'], ['cloison', 'Cloison', 'L'], ['n-poteau', 'Poteau', 'P']]],
+    ['Ouvertures', [['porte', 'Porte', 'O'], ['fenetre', 'Fenêtre', 'N']]],
+    ['Repères', [['trame', 'Trame', 'A'], ['escalier', 'Escalier', 'E']]],
+  ],
+};
 const OUTILS = new Map();
-const TOUCHES = {};
-for (const [, liste] of GROUPES) {
-  for (const [id, nom, t] of liste) {
-    OUTILS.set(id, { nom, touche: t });
-    if (t) TOUCHES[t.toLowerCase()] = id;
+const TOUCHES = { coupe: {}, plan: {} };
+const DU_MODE = { coupe: new Set(), plan: new Set() };
+for (const mode of ['coupe', 'plan']) {
+  for (const [, liste] of GROUPES[mode]) {
+    for (const [id, nom, t] of liste) {
+      if (!OUTILS.has(id)) OUTILS.set(id, { nom, touche: t });
+      DU_MODE[mode].add(id);
+      if (t) TOUCHES[mode][t.toLowerCase()] = id;
+    }
   }
 }
+const modeFeuille = () => (estPlan(feuille()) ? 'plan' : 'coupe');
+// Ces tracés s'arrêtent après un seul segment (une porte = un clic de départ, un clic d'arrivée).
+const SANS_SUITE = new Set(['porte', 'fenetre', 'trame', 'escalier']);
 
 const FLECHES = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
 const CRAN = Math.PI / 12; // 15°
@@ -46,6 +62,7 @@ const pointeurs = new Map();
 
 export function nomOutil(id = etat.outil) {
   if (NOM_BARRE[id]) return NOM_BARRE[id];
+  if (id === 'n-poteau') return 'Poteau';
   if (id.startsWith('n-')) return 'Nœud ' + String(NOM_NOEUD[id.slice(2)] || '').toLowerCase();
   return OUTILS.get(id)?.nom || id;
 }
@@ -54,8 +71,10 @@ export function nomOutil(id = etat.outil) {
 function construireBarre() {
   const nav = document.getElementById('outils');
   if (!nav) return;
+  const mode = modeFeuille();
   nav.innerHTML = '';
-  for (const [titre, liste] of GROUPES) {
+  nav.dataset.mode = mode;
+  for (const [titre, liste] of GROUPES[mode]) {
     const g = document.createElement('div');
     g.className = 'groupe-outils';
     const t = document.createElement('div');
@@ -83,8 +102,21 @@ function majBoutons() {
   document.querySelectorAll('#outils .outil').forEach((b) => b.classList.toggle('on', b.dataset.outil === etat.outil));
 }
 
+// Coupe ↔ plan : on change la colonne d'outils. Appelé à chaque rafraîchissement (ne fait rien si rien n'a changé).
+export function majModeOutils() {
+  const nav = document.getElementById('outils');
+  const mode = modeFeuille();
+  if (!nav || nav.dataset.mode === mode) return;
+  if (!DU_MODE[mode].has(etat.outil)) {
+    arreter();
+    etat.outil = 'selection';
+    majPointeur();
+  }
+  construireBarre();
+}
+
 export function choisirOutil(id) {
-  if (!OUTILS.has(id)) return;
+  if (!OUTILS.has(id) || !DU_MODE[modeFeuille()].has(id)) return;
   arreter();
   etat.outil = id;
   if (id !== 'selection') etat.sel.clear();
@@ -421,7 +453,7 @@ function ajouterBarre(p, q, type) {
   const na = obtenirNoeud(p, f);
   const nb = obtenirNoeud(q, f);
   if (na === nb) return null;
-  const b = { id: uid('b'), a: na.id, b: nb.id, type, ...reglagesBarre(type) };
+  const b = { id: uid('b'), a: na.id, b: nb.id, type, ...reglagesBarre(type, p, q) };
   f.barres.push(b);
   couperParNoeuds(b, f);
   nettoyerBarres(f);
@@ -435,6 +467,7 @@ function cliquerTrace() {
   const p = etat.acc?.p || etat.monde;
   if (a?.type !== 'trace' || !p || dist(a.A, p) < EPS) return;
   ajouterBarre(a.A, p, a.barre);
+  if (SANS_SUITE.has(a.barre)) { finirAction(); return; }
   if (etat.action === a) a.A = p.slice();
   majPointeur();
 }
@@ -465,6 +498,7 @@ function saisieLongueur(premier) {
       }
       const B = [arr(a.A[0] + L * Math.cos(ang)), arr(a.A[1] + L * Math.sin(ang))];
       ajouterBarre(a.A, B, a.barre);
+      if (SANS_SUITE.has(a.barre)) { finirAction(); return; }
       if (etat.action === a) a.A = B;
       majPointeur();
     },
@@ -895,7 +929,7 @@ function surTouche(ev) {
   if (k === '+' || k === '=') { zoomerCentre(1.25); return; }
   if (k === '-') { zoomerCentre(1 / 1.25); return; }
   if (l === 'f') { cadrerVue(); return; }
-  const o = TOUCHES[l];
+  const o = TOUCHES[modeFeuille()][l];
   if (o) { ev.preventDefault(); choisirOutil(o); }
 }
 

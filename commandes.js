@@ -39,17 +39,37 @@ export function retourner(ids = [...etat.sel]) {
     if (b && inverserCote(b)) n++;
   }
   if (n) modifie();
-  else toast('Rien à retourner : choisis un treillis, une dalle, une toile ou un sol');
+  else toast('Rien à retourner : choisis un treillis, une dalle, une toile, un sol, une porte ou un escalier');
   return n;
 }
 
-// Réglages par défaut d'une nouvelle barre (treillis, dalle, toile, sol).
-export function reglagesBarre(type) {
+// Nom libre pour une nouvelle trame : axes verticaux 1, 2, 3… ; axes horizontaux A, B, C…
+function nomTrame(A, B) {
+  const pris = new Set((feuille()?.barres || []).filter((b) => b.type === 'trame').map((b) => b.trame?.nom));
+  const verticale = A && B && Math.abs(B[1] - A[1]) > Math.abs(B[0] - A[0]);
+  if (!verticale) {
+    for (let i = 0; i < 26; i++) {
+      const c = String.fromCharCode(65 + i);
+      if (!pris.has(c)) return c;
+    }
+  }
+  for (let i = 1; i < 1000; i++) if (!pris.has(String(i))) return String(i);
+  return '?';
+}
+
+// Réglages par défaut d'une nouvelle barre (treillis, dalle, toile, sol, éléments du plan).
+// A, B : bouts du tracé, quand on les connaît (sens de la trame).
+export function reglagesBarre(type, A = null, B = null) {
   const D = etat.defauts;
   if (type === 'treillis') return { treillis: { ...D.treillis } };
   if (type === 'dalle') return { dalle: { ...D.dalle } };
   if (type === 'toile') return { toile: { ...D.toile } };
   if (type === 'sol') return { sol: { sens: 1 } };
+  if (type === 'murp') return { murp: { e: 0.2, ...(D.murp || {}) } };
+  if (type === 'cloison') return { cloison: { e: 0.1, ...(D.cloison || {}) } };
+  if (type === 'porte') return { porte: { sens: 1, charniere: 'a' } };
+  if (type === 'escalier') return { escalier: { w: 1.2, giron: 0.28, ...(D.escalier || {}), sens: 1 } };
+  if (type === 'trame') return { trame: { nom: nomTrame(A, B) } };
   return {};
 }
 
@@ -59,6 +79,8 @@ export function inverserCote(b) {
   if (b.type === 'dalle') { b.dalle = { ...D.dalle, ...b.dalle }; b.dalle.sens = b.dalle.sens === -1 ? 1 : -1; return true; }
   if (b.type === 'sol') { b.sol = { sens: 1, ...b.sol }; b.sol.sens = b.sol.sens === -1 ? 1 : -1; return true; }
   if (b.type === 'toile') { b.toile = { ...D.toile, ...b.toile }; b.toile.fleche = -(b.toile.fleche ?? 0.8); return true; }
+  if (b.type === 'porte') { b.porte = { sens: 1, charniere: 'a', ...b.porte }; b.porte.sens = b.porte.sens === -1 ? 1 : -1; return true; }
+  if (b.type === 'escalier') { b.escalier = { w: 1.2, giron: 0.28, ...b.escalier }; b.escalier.sens = b.escalier.sens === -1 ? 1 : -1; return true; }
   return false;
 }
 
@@ -206,7 +228,8 @@ export function insererCopie(copie, tr, miroir = false) {
     b.id = uid('b');
     b.a = A.id;
     b.b = B.id;
-    if (miroir && estVerticale([A.x, A.y], [B.x, B.y])) inverserCote(b);
+    // Miroir : une porte s'ouvre toujours de l'autre côté ; un treillis vertical change de côté.
+    if (miroir && (b.type === 'porte' || (b.type !== 'escalier' && estVerticale([A.x, A.y], [B.x, B.y])))) inverserCote(b);
     f.barres.push(b);
     for (const m of couperParNoeuds(b, f)) nouveaux.add(m.id);
   }

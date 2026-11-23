@@ -5,16 +5,31 @@ export const TYPES_BARRE = [
   ['poteau', 'Poteau'], ['poutre', 'Poutre'], ['bequille', 'Béquille'], ['entretoise', 'Entretoise'],
   ['cable', 'Câble'], ['treillis', 'Treillis'], ['toile', 'Toile'], ['dalle', 'Dalle'],
   ['sol', 'Sol'], ['mur', 'Mur'],
+  // Plan (vue de dessus)
+  ['murp', 'Mur'], ['cloison', 'Cloison'], ['porte', 'Porte'], ['fenetre', 'Fenêtre'],
+  ['escalier', 'Escalier'], ['trame', 'Trame'],
 ];
 export const NOM_BARRE = Object.fromEntries(TYPES_BARRE);
+export const BARRES_PLAN = new Set(['murp', 'cloison', 'porte', 'fenetre', 'escalier', 'trame']);
 export const TYPES_NOEUD = [
   ['libre', 'Libre'], ['rotule', 'Rotule'], ['rigide', 'Rigide'],
-  ['appui', 'Appui'], ['encastrement', 'Encastré'], ['glissant', 'Glissant'],
+  ['appui', 'Appui'], ['encastrement', 'Encastré'], ['glissant', 'Glissant'], ['poteau', 'Poteau'],
 ];
 export const NOM_NOEUD = Object.fromEntries(TYPES_NOEUD);
 export const FORMES_TREILLIS = [['warren', 'Warren'], ['warren_m', 'Warren +'], ['pratt', 'Pratt'], ['howe', 'Howe']];
 // Barres qu'on ne coupe pas quand un nœud tombe dessus (leur dessin dépend de leurs deux bouts).
-export const NON_COUPEES = new Set(['treillis', 'toile']);
+export const NON_COUPEES = new Set(['treillis', 'toile', 'porte', 'fenetre', 'escalier', 'trame']);
+
+// Feuille en plan (vue de dessus). Sans type : une coupe.
+export const estPlan = (f) => f?.type === 'plan';
+export const MURS = new Set(['murp', 'cloison']);
+export const OUVERTURES = new Set(['porte', 'fenetre']);
+export const EP_MUR = { murp: 0.2, cloison: 0.1 };
+export const epaisseur = (b) => { const e = +b[b.type]?.e; return e > 0 ? e : EP_MUR[b.type] || 0.2; };
+// Hauteurs pour la 3D d'un plan (m) : haut des portes, allège et haut des fenêtres.
+export const H_PORTE = 2.1;
+export const H_ALLEGE = 1;
+export const H_LINTEAU = 2.1;
 
 // ---------- Vecteurs ----------
 export const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
@@ -140,12 +155,136 @@ export function hachures(A, B, cote, su, out, ref, pas = 0.5, longueur = 0.45) {
   }
 }
 
+// ---------- Plan : murs, ouvertures, jonctions ----------
+// Un morceau de mur dont les deux bouts sont sur une porte ou une fenêtre est caché (l'ouverture le remplace).
+export function analysePlan(f, N = carteNoeuds(f)) {
+  const pt = (id) => { const n = N.get(id); return n ? [n.x, n.y] : null; };
+  const ouv = [];
+  for (const b of f.barres) {
+    if (!OUVERTURES.has(b.type)) continue;
+    const A = pt(b.a);
+    const B = pt(b.b);
+    if (A && B) ouv.push({ b, A, B });
+  }
+  const cache = new Map(); // id du mur → ouverture qui le cache
+  const ep = new Map(); // id de l'ouverture → épaisseur du mur dessous
+  const parNoeud = new Map(); // id du nœud → murs visibles qui y arrivent
+  for (const b of f.barres) {
+    if (!MURS.has(b.type)) continue;
+    const A = pt(b.a);
+    const B = pt(b.b);
+    if (!A || !B) continue;
+    const o = ouv.find((o) => distSeg(A, o.A, o.B).d < 1e-3 && distSeg(B, o.A, o.B).d < 1e-3);
+    if (o) {
+      cache.set(b.id, o.b);
+      ep.set(o.b.id, Math.max(ep.get(o.b.id) || 0, epaisseur(b)));
+      continue;
+    }
+    for (const id of [b.a, b.b]) {
+      if (!parNoeud.has(id)) parNoeud.set(id, []);
+      parNoeud.get(id).push(b);
+    }
+  }
+  return { cache, ep, parNoeud };
+}
+
+// Coins d'un bout de mur : [gauche, droite] vus du bout P (nœud idP) vers l'autre bout Q.
+// Seul → bout droit ; avec un autre mur → onglet ; à 3 murs ou plus → le mur entre dans le nœud.
+function coinsBout(b, idP, P, Q, J, N) {
+  const v = unite(sub(Q, P));
+  const n = normale(v);
+  const h = epaisseur(b) / 2;
+  const droit = (recul = 0) => { const C = sub(P, mul(v, recul)); return [add(C, mul(n, h)), sub(C, mul(n, h))]; };
+  const autres = (J.parNoeud.get(idP) || []).filter((m) => m !== b);
+  if (!autres.length) return droit();
+  if (autres.length > 1) return droit(Math.max(...autres.map(epaisseur)) / 2);
+  const m = autres[0];
+  const R = N.get(m.a === idP ? m.b : m.a);
+  if (!R) return droit();
+  const v2 = unite(sub([R.x, R.y], P));
+  const n2 = normale(v2);
+  const h2 = epaisseur(m) / 2;
+  const cr = v[0] * v2[1] - v[1] * v2[0];
+  if (Math.abs(cr) < 1e-3) return droit(); // dans le prolongement
+  // Le bord gauche de ce mur rencontre le bord droit de l'autre, et inversement.
+  const coin = (a, c) => { const d = sub(c, a); return add(add(P, a), mul(v, (d[0] * v2[1] - d[1] * v2[0]) / cr)); };
+  const g = coin(mul(n, h), mul(n2, -h2));
+  const dr = coin(mul(n, -h), mul(n2, h2));
+  const limite = 6 * Math.max(h, h2); // angle trop fermé : pas d'onglet en pointe
+  if (dist(g, P) > limite || dist(dr, P) > limite) return droit();
+  return [g, dr];
+}
+
+// Contour d'un mur avec ses jonctions (J = analysePlan).
+export function bandeMur(b, A, B, J, N) {
+  const [ga, da] = coinsBout(b, b.a, A, B, J, N);
+  const [gb, db] = coinsBout(b, b.b, B, A, J, N); // vu de B, la gauche est la droite de A
+  return [ga, db, gb, da];
+}
+
+const bande = (A, B, u, e) => { const n = mul(normale(u), e / 2); return [add(A, n), add(B, n), sub(B, n), sub(A, n)]; };
+
 // ---------- Formes d'une barre ----------
 // Forme = { k:'l'|'p'|'c'|'t', st: style, id: élément d'origine, ... }
-export function primitivesBarre(b, A, B, K, out) {
+// x (plan) : { coins } contour d'un mur déjà raccordé, { e } épaisseur du mur sous une ouverture.
+export function primitivesBarre(b, A, B, K, out, x = null) {
   const id = b.id;
   const u = unite(sub(B, A));
   const bas = versLeBas(u);
+  if (MURS.has(b.type)) {
+    out.push({ k: 'p', st: b.type, id, p: x?.coins || bande(A, B, u, epaisseur(b)), ferme: true });
+    return;
+  }
+  if (b.type === 'porte') {
+    const L = dist(A, B);
+    const o = b.porte || {};
+    const n = mul(normale(u), o.sens === -1 ? -1 : 1); // côté où elle s'ouvre
+    const C = o.charniere === 'b' ? B : A; // charnière
+    const w = o.charniere === 'b' ? mul(u, -1) : u;
+    const arc = [];
+    for (let i = 0; i <= 16; i++) {
+      const t = (i / 16) * (Math.PI / 2);
+      arc.push(add(C, add(mul(w, L * Math.cos(t)), mul(n, L * Math.sin(t)))));
+    }
+    out.push({ k: 'p', st: 'zone', id, p: [C, ...arc], ferme: true });
+    out.push({ k: 'p', st: 'porte-arc', id, p: arc, ferme: false });
+    out.push({ k: 'l', st: 'porte', id, p: [C, arc[16]] });
+    return;
+  }
+  if (b.type === 'fenetre') {
+    out.push({ k: 'p', st: 'fenetre', id, p: bande(A, B, u, x?.e || EP_MUR.murp), ferme: true });
+    out.push({ k: 'l', st: 'vitre', id, p: [A, B] });
+    return;
+  }
+  if (b.type === 'escalier') {
+    const L = dist(A, B);
+    const s = b.escalier || {};
+    const larg = Math.max(0.2, +s.w || 1.2);
+    const g = Math.max(0.1, +s.giron || 0.28);
+    const n = mul(normale(u), larg / 2);
+    out.push({ k: 'p', st: 'escalier', id, p: bande(A, B, u, larg), ferme: true });
+    for (let i = 1; i * g < L - 1e-6 && i < 400; i++) {
+      const c = add(A, mul(u, i * g));
+      out.push({ k: 'l', st: 'marche', id, p: [add(c, n), sub(c, n)] });
+    }
+    // Ligne de foulée : la flèche monte vers B (ou vers A si on l'a retourné).
+    const [D, F] = s.sens === -1 ? [B, A] : [A, B];
+    const v = mul(u, s.sens === -1 ? -1 : 1);
+    const t = Math.min(0.45 * K.su, L / 3);
+    const cote = mul(normale(v), t * 0.6);
+    out.push({ k: 'l', st: 'foulee', id, p: [D, F] });
+    out.push({ k: 'p', st: 'foulee', id, p: [add(sub(F, mul(v, t)), cote), F, sub(sub(F, mul(v, t)), cote)], ferme: false });
+    return;
+  }
+  if (b.type === 'trame') {
+    const r = 0.7 * K.su;
+    const C = sub(A, mul(u, r)); // la bulle est juste avant le début de l'axe
+    out.push({ k: 'l', st: 'trame', id, p: [A, B] });
+    out.push({ k: 'c', st: 'trame-rond', id, c: C, r });
+    const nom = String(b.trame?.nom ?? '').slice(0, 3);
+    if (nom) out.push({ k: 't', st: 'trame-txt', id, c: [C[0], C[1] - 0.36 * K.cote], txt: nom, ang: 0, h: K.cote, ancre: 'middle' });
+    return;
+  }
   if (b.type === 'treillis') {
     const t = b.treillis || {};
     const n = Math.max(1, Math.round(t.n || 6));
@@ -229,6 +368,11 @@ export function primitivesNoeud(nd, K, out, ecran) {
       hachures(A, B, [0, -1], su, out, id, 0.3, 0.3);
       break;
     }
+    case 'poteau': { // poteau vu en plan : carré plein à sa vraie taille
+      const h = Math.max(0.02, +nd.s || 0.3) / 2;
+      out.push({ k: 'p', st: 'poteau-plan', id, p: [[p[0] - h, p[1] - h], [p[0] + h, p[1] - h], [p[0] + h, p[1] + h], [p[0] - h, p[1] + h]], ferme: true });
+      break;
+    }
     default:
       if (ecran) out.push({ k: 'c', st: 'noeud', id, c: p, r: 0.12 * su });
   }
@@ -264,16 +408,28 @@ export function primitivesCote(c, A, B, K, out) {
 }
 
 // ---------- Toute une feuille ----------
-const ORDRE = { sol: 0, mur: 0, dalle: 1, toile: 2, cable: 3, entretoise: 4, treillis: 5, poutre: 6, bequille: 6, poteau: 7 };
+const ORDRE = {
+  trame: -2, escalier: -1, sol: 0, mur: 0, cloison: 0.3, murp: 0.4, dalle: 1, toile: 2, cable: 3,
+  entretoise: 4, treillis: 5, poutre: 6, bequille: 6, poteau: 7, fenetre: 8, porte: 8,
+};
 
 export function primitivesFeuille(f, K, ecran) {
   const out = [];
   const N = carteNoeuds(f);
+  const J = f.barres.some((b) => MURS.has(b.type)) ? analysePlan(f, N) : null;
   const barres = f.barres.slice().sort((a, b) => (ORDRE[a.type] ?? 5) - (ORDRE[b.type] ?? 5));
   for (const b of barres) {
     const na = N.get(b.a);
     const nb = N.get(b.b);
-    if (na && nb) primitivesBarre(b, [na.x, na.y], [nb.x, nb.y], K, out);
+    if (!na || !nb) continue;
+    const A = [na.x, na.y];
+    const B = [nb.x, nb.y];
+    let x = null;
+    if (J && MURS.has(b.type)) {
+      if (J.cache.has(b.id)) continue; // sous une porte ou une fenêtre
+      x = { coins: bandeMur(b, A, B, J, N) };
+    } else if (J && OUVERTURES.has(b.type)) x = { e: J.ep.get(b.id) };
+    primitivesBarre(b, A, B, K, out, x);
   }
   for (const s of f.traits || []) if (s.pts.length > 1) out.push({ k: 'p', st: 'trait', id: s.id, p: s.pts, ferme: false });
   for (const nd of f.noeuds) primitivesNoeud(nd, K, out, ecran);

@@ -225,3 +225,100 @@ kbd {
   .chiffre { min-width: 0; }
   #accroche { display: none; }
 }
+
+/* ---------- Note de calcul (feuille « Descente de charges ») ---------- */
+.calcul {
+  position: fixed; inset: 0; z-index: 40; overflow-y: auto; scrollbar-width: thin;
+  background: var(--noir); padding: var(--e5) var(--e5) var(--e6);
+  display: flex; flex-direction: column; gap: var(--e4); align-items: center;
+}
+.calcul[hidden] { display: none; }
+.calcul > * { width: 100%; max-width: 1040px; }
+.c-fermer { position: fixed; top: var(--e3); right: var(--e3); z-index: 41; }
+.c-tete { display: flex; flex-direction: column; gap: 2px; }
+.c-carte { display: flex; flex-direction: column; gap: var(--e3); padding: var(--e4); }
+.c-ico svg { width: 20px; height: 20px; display: block; }
+.a-carte-tete { display: flex; align-items: center; gap: var(--e2); }
+.c-note { margin: 0; }
+.c-source { text-align: center; }
+
+.c-verdicts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--e3); }
+.c-verdict { display: flex; flex-direction: column; gap: 2px; padding: var(--e4); }
+.c-gros { font-size: var(--t-chiffre); line-height: 1; font-variant-numeric: tabular-nums; }
+.c-verdict.c-rate { border-color: var(--orange); }
+.c-verdict.c-rate .c-gros { color: var(--orange); }
+.c-mal { color: var(--orange); }
+
+/* cascade des charges */
+.c-cascade { display: flex; flex-direction: column; gap: var(--e2); }
+.c-etage {
+  position: relative; display: grid; grid-template-columns: 1fr auto; align-items: baseline;
+  gap: 2px var(--e3); padding: var(--e3) var(--e4) var(--e3) var(--e5);
+  background: var(--surface2); border-radius: var(--r-petit);
+}
+.c-etage-nom { font-weight: 600; }
+.c-etage-val { font-size: var(--t-titre); font-weight: 700; font-variant-numeric: tabular-nums; }
+.c-etage-det { grid-column: 1 / -1; font-size: var(--t-petit); }
+/* svg.c-fleche : la scène porte aussi une classe c-fleche (curseur), elle ne doit pas prendre ce style */
+svg.c-fleche {
+  position: absolute; left: var(--e3); bottom: -14px; width: 12px; height: 22px;
+  fill: none; stroke: var(--gris2); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
+}
+.c-chiffres { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--e3); }
+.c-chiffres > div { display: flex; flex-direction: column; gap: 2px; }
+.c-chiffres b { font-size: var(--t-titre); font-variant-numeric: tabular-nums; }
+
+/* jauges nommees */
+.c-jauge { display: grid; grid-template-columns: 1fr minmax(120px, 3fr) auto; align-items: center; gap: var(--e3); }
+.c-jauge-nom { font-size: var(--t-petit); color: var(--gris); }
+.c-jauge-val { font-size: var(--t-corps); font-weight: 600; min-width: 86px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* elevation et courbe */
+.c-elev, .c-courbe { width: 100%; height: auto; display: block; background: var(--surface2); border-radius: var(--r-petit); }
+.c-elev { padding: var(--e2) 0; }
+.c-ax { fill: var(--gris); font-size: 12px; font-family: var(--police); }
+.c-ax-orange { fill: var(--orange); }
+.c-rep { fill: var(--gris); font-size: 11px; font-family: var(--police); }
+.c-legende { display: flex; flex-wrap: wrap; gap: var(--e4); align-items: center; font-size: var(--t-petit); color: var(--gris); }
+.c-legende > span { display: inline-flex; align-items: center; gap: 6px; }
+.c-puce { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.c-trac { background: var(--blanc); }
+.c-comp { background: var(--orange); }
+.c-trait { width: 18px; height: 0; border-top: 2px solid var(--blanc); flex: none; }
+.c-trait-gris { border-top-style: dashed; border-color: var(--gris2); }
+
+/* tableaux */
+.c-table { width: 100%; border-collapse: collapse; font-size: var(--t-petit); }
+.c-table th { text-align: left; font-weight: 500; color: var(--gris); padding: 4px 8px 6px; border-bottom: 1px solid var(--ligne); white-space: nowrap; }
+.c-table td { padding: 7px 8px; border-bottom: 1px solid var(--ligne); vertical-align: middle; }
+.c-table td.c-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.c-num { font-variant-numeric: tabular-nums; }
+.c-defile { overflow-x: auto; scrollbar-width: thin; }
+.c-table tbody tr:last-child td { border-bottom: 0; }
+.c-table td .a-jauge { min-width: 70px; }
+.c-table td .c-puce { display: inline-block; margin-right: 8px; vertical-align: middle; }
+.c-retenu td { background: var(--orange-doux); }
+.c-liste { margin: 0; padding-left: var(--e5); display: flex; flex-direction: column; gap: var(--e2); }
+
+@media (max-width: 760px) {
+  .calcul { padding: var(--e4) var(--e3) var(--e6); }
+  .c-verdicts { grid-template-columns: 1fr; }
+  .c-jauge { grid-template-columns: 1fr auto; }
+  .c-jauge .a-jauge { grid-column: 1 / -1; }
+}
+
+/* Menu du « + » : coupe ou plan */
+.menu-feuille {
+  position: fixed; z-index: 35; width: 220px; padding: 6px; display: flex; flex-direction: column; gap: 4px;
+  background: var(--surface); border: 1px solid var(--ligne); border-radius: var(--r-petit); box-shadow: 0 8px 24px rgba(0,0,0,.5);
+}
+.menu-feuille[hidden] { display: none; }
+.menu-feuille button {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; text-align: left; cursor: pointer;
+  background: none; border: 1px solid transparent; border-radius: var(--r-petit); color: var(--blanc); font: inherit;
+}
+.menu-feuille button:hover, .menu-feuille button:focus-visible { background: var(--surface2); border-color: var(--ligne); }
+.menu-feuille svg { width: 22px; height: 22px; flex: none; }
+.menu-feuille strong { display: block; font-size: 14px; }
+.menu-feuille small { display: block; font-size: 12px; color: var(--gris); }
+.carte3d-tete label[hidden] { display: none; }

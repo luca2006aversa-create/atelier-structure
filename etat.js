@@ -22,6 +22,9 @@ export const etat = {
     treillis: { forme: 'warren', h: 1.5, n: 6, sens: 1 },
     dalle: { e: 0.3, sens: 1 },
     toile: { fleche: 0.8 },
+    murp: { e: 0.2 },
+    cloison: { e: 0.1 },
+    escalier: { w: 1.2, giron: 0.28 },
   },
   croquis: [],          // noms des images du dossier croquis
   prims: [],            // formes à l'écran (pour la recherche à la souris)

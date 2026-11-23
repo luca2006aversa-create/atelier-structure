@@ -138,7 +138,7 @@ function apercu() {
   switch (a.type) {
     case 'trace': {
       if (!m) break;
-      primitivesBarre({ id: 'apercu', a: '', b: '', type: a.barre, ...reglagesBarre(a.barre) }, a.A, m, K, out);
+      primitivesBarre({ id: 'apercu', a: '', b: '', type: a.barre, ...reglagesBarre(a.barre, a.A, m) }, a.A, m, K, out);
       const L = dist(a.A, m);
       if (L > 1e-9) {
         let ang = (Math.atan2(m[1] - a.A[1], m[0] - a.A[0]) * 180) / Math.PI;
@@ -222,12 +222,16 @@ function infos() {
   if (z) z.textContent = '1:' + Number((3779.5 / etat.vue.z).toPrecision(2)).toLocaleString('fr-FR');
 }
 
+const UN_SEGMENT = new Set(['porte', 'fenetre', 'trame', 'escalier']); // tracés d'un seul segment
+
 function texteConsigne() {
   const a = etat.action;
   const o = etat.outil;
   if (a) {
     switch (a.type) {
-      case 'trace': return `${NOM_BARRE[a.barre]} : clic au point suivant · tape un chiffre pour la longueur · Échap pour finir`;
+      case 'trace':
+        if (UN_SEGMENT.has(a.barre)) return `${NOM_BARRE[a.barre]} : clic à l’autre bout · ou tape la longueur · Échap pour annuler`;
+        return `${NOM_BARRE[a.barre]} : clic au point suivant · tape un chiffre pour la longueur · Échap pour finir`;
       case 'cote': return a.B ? 'Cote : clic pour placer la ligne de cote' : 'Cote : clic au 2e point';
       case 'etalon': return a.P1 ? 'Étalonner : clic sur le 2e point, puis tape la vraie distance' : 'Étalonner : clic sur un point connu du croquis';
       case 'croquis': return 'Croquis : glisse pour le déplacer · Échap pour finir';
@@ -241,6 +245,7 @@ function texteConsigne() {
   }
   if (o === 'selection') return '';
   if (NOM_BARRE[o]) return `${NOM_BARRE[o]} : clic au point de départ`;
+  if (o === 'n-poteau') return 'Poteau : clic où le poser (grille, nœud ou mur)';
   if (o.startsWith('n-')) return `${NOM_NOEUD[o.slice(2)]} : clic sur un nœud ou une barre`;
   if (o === 'gomme') return 'Gomme : clic ou glisse sur ce qu’il faut effacer';
   if (o === 'cote') return 'Cote : clic au 1er point';
