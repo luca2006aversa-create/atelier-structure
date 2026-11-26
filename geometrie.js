@@ -1,9 +1,10 @@
 // Géométrie de l'atelier : types, calculs de vecteurs, et formes à dessiner (écran, papier, 3D).
 // Unités : mètres, y vers le haut, sol à 0.
+import { sectionDe } from './matieres.js';
 
 export const TYPES_BARRE = [
   ['poteau', 'Poteau'], ['poutre', 'Poutre'], ['bequille', 'Béquille'], ['entretoise', 'Entretoise'],
-  ['cable', 'Câble'], ['treillis', 'Treillis'], ['toile', 'Toile'], ['dalle', 'Dalle'],
+  ['cable', 'Câble'], ['treillis', 'Treillis'], ['toit', 'Toit'], ['toile', 'Toile'], ['dalle', 'Dalle'],
   ['sol', 'Sol'], ['mur', 'Mur'],
   // Plan (vue de dessus)
   ['murp', 'Mur'], ['cloison', 'Cloison'], ['porte', 'Porte'], ['fenetre', 'Fenêtre'],
@@ -16,9 +17,10 @@ export const TYPES_NOEUD = [
   ['appui', 'Appui'], ['encastrement', 'Encastré'], ['glissant', 'Glissant'], ['poteau', 'Poteau'],
 ];
 export const NOM_NOEUD = Object.fromEntries(TYPES_NOEUD);
+export const FORMES_TOIT = [['2pentes', '2 pentes'], ['1pente', '1 pente'], ['plat', 'Plat'], ['courbe', 'Courbe']];
 export const FORMES_TREILLIS = [['warren', 'Warren'], ['warren_m', 'Warren +'], ['pratt', 'Pratt'], ['howe', 'Howe']];
 // Barres qu'on ne coupe pas quand un nœud tombe dessus (leur dessin dépend de leurs deux bouts).
-export const NON_COUPEES = new Set(['treillis', 'toile', 'porte', 'fenetre', 'escalier', 'trame']);
+export const NON_COUPEES = new Set(['treillis', 'toit', 'toile', 'porte', 'fenetre', 'escalier', 'trame']);
 
 // Feuille en plan (vue de dessus). Sans type : une coupe.
 export const estPlan = (f) => f?.type === 'plan';
@@ -224,6 +226,20 @@ export function bandeMur(b, A, B, J, N) {
 
 const bande = (A, B, u, e) => { const n = mul(normale(u), e / 2); return [add(A, n), add(B, n), sub(B, n), sub(A, n)]; };
 
+// Barres linéaires qu'on peut dessiner à leur vraie largeur (mode « sections » de la feuille).
+export const BARRES_LIN = new Set(['poteau', 'poutre', 'bequille', 'entretoise', 'cable', 'toit']);
+// Hauteur de section vue dans le plan de la feuille (la flexion se fait dans ce plan).
+export const hauteurVue = (b) => sectionDe(b).h;
+
+// Un élément linéaire : simple trait, ou bande à sa vraie largeur si K.sections est actif.
+function lin(out, st, id, A, B, K, e) {
+  if (K.sections && e > 0.004) {
+    out.push({ k: 'p', st: st + '-vol', id, p: bande(A, B, unite(sub(B, A)), e), ferme: true });
+    return;
+  }
+  out.push({ k: 'l', st, id, p: [A, B] });
+}
+
 // ---------- Formes d'une barre ----------
 // Forme = { k:'l'|'p'|'c'|'t', st: style, id: élément d'origine, ... }
 // x (plan) : { coins } contour d'un mur déjà raccordé, { e } épaisseur du mur sous une ouverture.
@@ -294,9 +310,11 @@ export function primitivesBarre(b, A, B, K, out, x = null) {
     const B2 = add(B, off);
     const P = (i) => lerp(A, B, i / n);
     const Q = (i) => lerp(A2, B2, i / n);
-    const L = (p, q) => out.push({ k: 'l', st: 'diagonale', id, p: [p, q] });
+    const em = hauteurVue(b);
+    const L = (p, q) => lin(out, 'diagonale', id, p, q, K, em * 0.6);
     out.push({ k: 'p', st: 'zone', id, p: [A, B, B2, A2], ferme: true });
-    out.push({ k: 'l', st: 'membrure', id, p: [A, B] }, { k: 'l', st: 'membrure', id, p: [A2, B2] });
+    lin(out, 'membrure', id, A, B, K, em);
+    lin(out, 'membrure', id, A2, B2, K, em);
     const forme = t.forme || 'warren';
     if (forme === 'warren' || forme === 'warren_m') {
       for (let i = 0; i < n; i++) { if (i % 2 === 0) L(P(i), Q(i + 1)); else L(Q(i), P(i + 1)); }
@@ -313,6 +331,36 @@ export function primitivesBarre(b, A, B, K, out, x = null) {
         if (gauche === pratt) L(Ht(i), Bt(i + 1)); else L(Ht(i + 1), Bt(i));
       }
     }
+    return;
+  }
+  if (b.type === 'toit') {
+    const t = b.toit || {};
+    const L = dist(A, B);
+    const sens = t.sens === -1 ? -1 : 1;
+    const n = mul(bas, -sens); // vers le haut du toit (ou l'inverse si retourné)
+    const forme = t.forme || '2pentes';
+    const p = Math.max(0, +t.pente || 0) / 100; // pente en %
+    const d = Math.max(0, +t.debord || 0);
+    const x0 = -d;
+    const x1 = L + d;
+    const H = (x) => {
+      if (forme === 'plat') return 0;
+      if (forme === '1pente') return p * x;
+      if (forme === 'courbe') return (+t.fleche || 0) * Math.sin((Math.PI * (x - x0)) / Math.max(1e-6, x1 - x0));
+      return p * Math.min(x, L - x);
+    };
+    const pt = (x) => add(add(A, mul(u, x)), mul(n, H(x)));
+    let pts;
+    if (forme === 'courbe') { pts = []; for (let i = 0; i <= 24; i++) pts.push(pt(x0 + ((x1 - x0) * i) / 24)); }
+    else if (forme === '2pentes') pts = [pt(x0), pt(L / 2), pt(x1)];
+    else pts = [pt(x0), pt(x1)];
+    out.push({ k: 'l', st: 'zone', id, p: [A, B] }); // la portée : invisible, mais on peut cliquer dessus
+    if (K.sections) {
+      // Épaisseur mesurée à la verticale (comme on dessine un rampant).
+      const ev = hauteurVue(b) * (forme === 'courbe' || forme === 'plat' ? 1 : Math.sqrt(1 + p * p));
+      const dessous = pts.slice().reverse().map((q) => sub(q, mul(n, ev)));
+      out.push({ k: 'p', st: 'toit-vol', id, p: [...pts, ...dessous], ferme: true });
+    } else out.push({ k: 'p', st: 'toit', id, p: pts, ferme: false });
     return;
   }
   if (b.type === 'toile') {
@@ -333,6 +381,7 @@ export function primitivesBarre(b, A, B, K, out, x = null) {
     hachures(A, B, mul(bas, b.sol?.sens === -1 ? -1 : 1), K.su, out, id);
     return;
   }
+  if (BARRES_LIN.has(b.type)) { lin(out, b.type, id, A, B, K, hauteurVue(b)); return; }
   out.push({ k: 'l', st: b.type, id, p: [A, B] });
 }
 
@@ -410,11 +459,13 @@ export function primitivesCote(c, A, B, K, out) {
 // ---------- Toute une feuille ----------
 const ORDRE = {
   trame: -2, escalier: -1, sol: 0, mur: 0, cloison: 0.3, murp: 0.4, dalle: 1, toile: 2, cable: 3,
-  entretoise: 4, treillis: 5, poutre: 6, bequille: 6, poteau: 7, fenetre: 8, porte: 8,
+  entretoise: 4, treillis: 5, toit: 5.5, poutre: 6, bequille: 6, poteau: 7, fenetre: 8, porte: 8,
 };
 
-export function primitivesFeuille(f, K, ecran) {
+export function primitivesFeuille(f, K0, ecran) {
   const out = [];
+  // Mode « sections » : les barres sont dessinées à leur vraie largeur.
+  const K = f.sections && !estPlan(f) ? { ...K0, sections: true } : K0;
   const N = carteNoeuds(f);
   const J = f.barres.some((b) => MURS.has(b.type)) ? analysePlan(f, N) : null;
   const barres = f.barres.slice().sort((a, b) => (ORDRE[a.type] ?? 5) - (ORDRE[b.type] ?? 5));

@@ -3,13 +3,13 @@
 // flèches, courbe de la hauteur de ferme. Aucune valeur en dur ici.
 import { CALC, BALAYAGE, BARRES, DATE_CALCUL } from './calculs.js';
 
-const ico = (nom) => (window.Icones ? window.Icones.svg(nom) : '');
-const n1 = (v) => (Math.round(v * 10) / 10).toLocaleString('fr-FR', { minimumFractionDigits: 1 });
-const n2 = (v) => (Math.round(v * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2 });
-const pc = (v) => Math.max(0, Math.min(100, Math.round(v * 100)));
+export const ico = (nom) => (window.Icones ? window.Icones.svg(nom) : '');
+export const n1 = (v) => (Math.round(v * 10) / 10).toLocaleString('fr-FR', { minimumFractionDigits: 1 });
+export const n2 = (v) => (Math.round(v * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2 });
+export const pc = (v) => Math.max(0, Math.min(100, Math.round(v * 100)));
 
 // ---------- Cartes ----------
-function carte(titre, icone, corps, note = '') {
+export function carte(titre, icone, corps, note = '') {
   return `<section class="a-carte c-carte">
     <div class="a-carte-tete"><span class="c-ico">${ico(icone)}</span><h3 class="a-titre">${titre}</h3></div>
     ${corps}
@@ -17,7 +17,7 @@ function carte(titre, icone, corps, note = '') {
   </section>`;
 }
 
-function jauge(nom, valeur, texte, alerte) {
+export function jauge(nom, valeur, texte, alerte) {
   return `<div class="c-jauge">
     <span class="c-jauge-nom">${nom}</span>
     <div class="a-jauge${alerte ? ' alerte' : ''}" style="--v:${pc(valeur)}"><i></i></div>

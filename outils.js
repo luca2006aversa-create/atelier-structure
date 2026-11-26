@@ -18,7 +18,7 @@ const GROUPES = {
   coupe: [
     COMMUNS,
     ['Barres', [['poteau', 'Poteau', 'P'], ['poutre', 'Poutre', 'B'], ['bequille', 'Béquille', 'Q'], ['entretoise', 'Entretoise', 'E']]],
-    ['Spécial', [['treillis', 'Treillis', 'R'], ['cable', 'Câble'], ['toile', 'Toile'], ['dalle', 'Dalle']]],
+    ['Spécial', [['treillis', 'Treillis', 'R'], ['toit', 'Toit', 'I'], ['cable', 'Câble'], ['toile', 'Toile'], ['dalle', 'Dalle']]],
     ['Site', [['sol', 'Sol', 'S'], ['mur', 'Mur', 'M']]],
     ['Nœuds', [['n-appui', 'Appui'], ['n-encastrement', 'Encastré'], ['n-rotule', 'Rotule'], ['n-rigide', 'Rigide'], ['n-glissant', 'Glissant'], ['n-libre', 'Libre']]],
   ],

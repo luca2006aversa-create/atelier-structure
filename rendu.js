@@ -50,6 +50,16 @@ const ECRAN = {
   'trame-rond': { s: '#8c8c8c', w: 1.25, f: '#000' },
   'trame-txt': { f: '#fff' },
   'poteau-plan': { s: '#000', w: 1, f: '#fff' },
+  toit: { s: '#fff', w: 3 },
+  // Vraie largeur (mode sections) : la barre est un volume plein.
+  'poteau-vol': { s: '#fff', w: 1, f: '#4a4a4a' },
+  'poutre-vol': { s: '#fff', w: 1, f: '#4a4a4a' },
+  'bequille-vol': { s: '#fff', w: 1, f: '#3c3c3c' },
+  'entretoise-vol': { s: '#fff', w: 1, f: '#3c3c3c' },
+  'cable-vol': { s: '#fff', w: 1, f: '#8c8c8c' },
+  'membrure-vol': { s: '#fff', w: 1, f: '#4a4a4a' },
+  'diagonale-vol': { s: '#fff', w: 1, f: '#3c3c3c' },
+  'toit-vol': { s: '#fff', w: 1, f: '#4a4a4a' },
 };
 
 const PAPIER = {
@@ -89,6 +99,16 @@ const PAPIER = {
   'trame-rond': { s: '#000', w: 1, f: '#fff' },
   'trame-txt': { f: '#000', g: 600 },
   'poteau-plan': { s: '#fff', w: 0.8, f: '#000' },
+  toit: { s: '#000', w: 3 },
+  // Vraie largeur (mode sections) : poché gris, contour noir.
+  'poteau-vol': { s: '#000', w: 0.8, f: '#d4d4d4' },
+  'poutre-vol': { s: '#000', w: 0.8, f: '#d4d4d4' },
+  'bequille-vol': { s: '#e8743b', w: 0.9, f: '#f6ddd0' },
+  'entretoise-vol': { s: '#000', w: 0.8, f: '#e2e2e2' },
+  'cable-vol': { s: '#000', w: 0.6, f: '#000' },
+  'membrure-vol': { s: '#000', w: 0.8, f: '#d4d4d4' },
+  'diagonale-vol': { s: '#000', w: 0.8, f: '#e2e2e2' },
+  'toit-vol': { s: '#000', w: 0.8, f: '#d4d4d4' },
 };
 
 export const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

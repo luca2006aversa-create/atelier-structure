@@ -55,6 +55,14 @@ const T = {
   fenetre: R(3, 9, 18, 6, 0.5) + P('M3 12h18'),
   trame: TIRETS('M9.5 12H22', '4 2 1 2', C(6, 12, 3.5)),
   escalier: R(6, 3, 12, 18, 0.5) + P('M6 7.5h12M6 12h12M6 16.5h12|M12 19V5M9.5 7.5L12 5l2.5 2.5'),
+  // Section, matière, toit, schéma, export
+  section: R(7, 4, 11, 16, 0.5) + P('M3 4v16|M2 4h2M2 20h2|M7 8h11M7 12h11M7 16h11'),
+  matiere: R(3, 3, 8, 8, 1) + R(13, 3, 8, 8, 1) + R(3, 13, 8, 8, 1) + R(13, 13, 8, 8, 1),
+  toit: P('M2 13L12 4l10 9|M4.5 11.5V20h15v-8.5|M12 20v-5h-3v5'),
+  pente: P('M3 20h18|M3 20L19 6|M19 6v6|M13 20v-5.5'),
+  schema: P('M3 10h18|M6 10v6M18 10v6|M4 17h4M16 17h4|M7 2v5M12 2v5M17 2v5|M5.5 5.5L7 7l1.5-1.5M10.5 5.5L12 7l1.5-1.5M15.5 5.5L17 7l1.5-1.5'),
+  volume: P('M12 3l8 4.5v9L12 21l-8-4.5v-9z|M12 12l8-4.5M12 12v9M12 12L4 7.5'),
+  exporter: P('M12 3v12|M8 11l4 4 4-4|M4 16v4h16v-4'),
   // Types de feuille
   'f-coupe': P('M2 20h20|M5 20V10l7-6 7 6v10|M5 13h14'),
   'f-plan': R(3, 4, 18, 16, 0.5) + P('M12 4v6M12 14v6|M12 10a4 4 0 0 1 4 4'),

@@ -20,6 +20,7 @@ export const etat = {
   touches: { shift: false, alt: false, espace: false },
   defauts: {
     treillis: { forme: 'warren', h: 1.5, n: 6, sens: 1 },
+    toit: { forme: '2pentes', pente: 35, debord: 0.5, fleche: 1.5, sens: 1 },
     dalle: { e: 0.3, sens: 1 },
     toile: { fleche: 0.8 },
     murp: { e: 0.2 },

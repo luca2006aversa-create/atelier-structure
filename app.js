@@ -8,11 +8,16 @@ import { initOutils, finirAction, majModeOutils } from './outils.js';
 import { initPanneau, dessinerPanneau } from './panneau.js';
 import { poserPictos } from './pictos.js';
 import { chargerListe, envoyerImage } from './croquis.js';
-import { charger, planifier, feuilleVide, tourPartage, etatSauvegarde } from './sauvegarde.js';
+import { charger, planifier, sauver, feuilleVide, tourPartage, etatSauvegarde } from './sauvegarde.js';
 import { brancherFinir } from './commandes.js';
 import { Vue3D } from './vue3d.js';
 import { dessinerCalcul } from './calcul.js';
-import { enLigne } from './mode.js';
+import { dessinerBilan } from './bilan.js';
+import { enLigne, telecharger } from './mode.js';
+import { projet, avecProjet } from './projet.js';
+import { schema, MODES } from './schema.js';
+import { jsonRhino, resumeRhino } from './rhino.js';
+import { FORMATS } from './cao.js';
 import { ecouter, verifierCode, retenirCode, session, peutEcrire } from './partage.js';
 import { trier, copie } from './fusion.js';
 
@@ -288,9 +293,25 @@ function valeur3D(id, el) {
 
 function brancher3D() {
   vue3d = new Vue3D($('canvas3d'), () => ({ feuille: feuille(), sel: etat.sel }));
+  // Clic dans la 3D : sélectionne la barre ou le mur visé (clic dans le vide : rien)
+  vue3d.choisir = (id) => {
+    if (!id && !etat.sel.size) return;
+    etat.sel.clear();
+    if (id) etat.sel.add(id);
+    rafraichir();
+  };
   new ResizeObserver(() => { if (!carte().hidden) vue3d.demander(); }).observe($('canvas3d'));
   $('b-3d').addEventListener('click', () => basculer3D());
+  brancherExport();
+  $('b-3d-png').addEventListener('click', exporterImage3D);
   $('b-3d-fermer').addEventListener('click', () => basculer3D(false));
+  const bVol = $('b-3d-volumes');
+  bVol.addEventListener('click', () => {
+    vue3d.volumes = !vue3d.volumes;
+    bVol.classList.toggle('on', vue3d.volumes);
+    bVol.title = vue3d.volumes ? 'Volumes / traits' : 'Traits / volumes';
+    vue3d.demander();
+  });
   $('b-3d-grand').addEventListener('click', () => {
     carte().classList.toggle('grand');
     vue3d.demander();
@@ -325,15 +346,168 @@ function brancher3D() {
   }
 }
 
+// ---------- Passerelle Rhino / Grasshopper ----------
+// On enregistre la structure (axes, sections, matières) ; les scripts du dossier rhino/
+// la rebâtissent en volumes dans Rhino, ou la rendent pilotable dans Grasshopper.
+function exporterRhino() {
+  const f = feuille();
+  const r = f ? jsonRhino(f) : { erreur: 'Aucune feuille.' };
+  if (r.erreur) { toast(r.erreur, true); return; }
+  const nom = String(f.nom || 'structure').replace(/[^\w .-]+/g, '-');
+  telecharger(nom + '.structure.json', r.texte, 'application/json');
+  toast('Rhino : ' + resumeRhino(r.donnees));
+}
+
+// ---------- Export vers ArchiCAD, Revit, Rhino, AutoCAD ----------
+// Un petit menu sous le bouton : chaque format dit quels logiciels l'ouvrent.
+function brancherExport() {
+  const bouton = $('b-3d-export');
+  const menu = $('menu-export');
+  const fermer = () => { menu.hidden = true; bouton.setAttribute('aria-expanded', 'false'); };
+  bouton.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if (!menu.hidden) { fermer(); return; }
+    const r = bouton.getBoundingClientRect();
+    const w = 270;
+    menu.style.left = Math.max(8, Math.min(r.right - w, document.documentElement.clientWidth - w - 8)) + 'px';
+    menu.style.top = r.bottom + 6 + 'px';
+    menu.hidden = false;
+    bouton.setAttribute('aria-expanded', 'true');
+  });
+  document.addEventListener('pointerdown', (ev) => { if (!menu.hidden && !menu.contains(ev.target) && !bouton.contains(ev.target)) fermer(); });
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !menu.hidden) fermer(); });
+  menu.addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-format]');
+    if (!b) return;
+    fermer();
+    exporterCAO(b.dataset.format);
+  });
+}
+
+function exporterCAO(format) {
+  if (format === 'rhino') { exporterRhino(); return; }
+  const f = feuille();
+  const F = FORMATS[format];
+  if (!f || !F) return;
+  let r;
+  try { r = F.faire(f); } catch (err) { console.error(err); r = { erreur: 'Export impossible : ' + err.message }; }
+  if (r.erreur) { toast(r.erreur, true); return; }
+  const nom = String(f.nom || 'structure').replace(/[^\w .-]+/g, '-');
+  telecharger(nom + F.ext, r.texte, F.type);
+  toast(format === 'dxf2d' ? 'Dessin 2D enregistré (mètres)' : r.n + ' éléments enregistrés (mètres)');
+}
+
+// Image de la vue 3D telle qu'elle est à l'écran (PNG, à la résolution de l'écran)
+function exporterImage3D() {
+  const f = feuille();
+  if (!f || !vue3d) return;
+  vue3d.dessiner();
+  const nom = String(f.nom || 'structure').replace(/[^\w .-]+/g, '-');
+  $('canvas3d').toBlob((blob) => {
+    if (!blob) { toast('Image impossible à créer.', true); return; }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nom + ' - 3D.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('Image 3D enregistrée');
+  }, 'image/png');
+}
+
+// ---------- Schéma structurel ----------
+// Une seule lecture à la fois : statique, effort normal, moment, déformée, taux.
+let modeSchema = 'statique';
+const carteSch = () => $('carte-schema');
+
+function majSchema() {
+  const box = carteSch();
+  if (box.hidden) return;
+  const f = feuille();
+  const vue = $('sch-vue');
+  const pied = $('sch-pied');
+  const dire = (t) => { vue.textContent = ''; const p = document.createElement('p'); p.className = 'sch-vide'; p.textContent = t; vue.appendChild(p); pied.textContent = ''; };
+  if (!f || f.type === 'plan') return dire('Le schéma se calcule sur une coupe : poteaux, poutres, treillis.');
+  const r = schema(f, modeSchema, Math.max(320, vue.clientWidth), Math.max(240, vue.clientHeight));
+  if (r.erreur) return dire(r.erreur);
+  vue.innerHTML = r.svg;
+  pied.textContent = (MODES.find((m) => m[0] === modeSchema) || MODES[0])[2];
+  return undefined;
+}
+
+function basculerSchema(ouvrir = carteSch().hidden) {
+  carteSch().hidden = !ouvrir;
+  const b = $('b-schema');
+  b.classList.toggle('principal', ouvrir);
+  b.setAttribute('aria-pressed', String(ouvrir));
+  if (ouvrir) majSchema();
+}
+
+function brancherSchema() {
+  const tetes = $('sch-modes');
+  for (const [cle, nom] of MODES) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = nom;
+    b.dataset.mode = cle;
+    b.classList.toggle('on', cle === modeSchema);
+    b.addEventListener('click', () => {
+      modeSchema = cle;
+      for (const o of tetes.children) o.classList.toggle('on', o.dataset.mode === cle);
+      majSchema();
+    });
+    tetes.appendChild(b);
+  }
+  $('b-schema').addEventListener('click', () => basculerSchema());
+  $('b-sch-fermer').addEventListener('click', () => basculerSchema(false));
+  $('b-sch-grand').addEventListener('click', () => {
+    carteSch().classList.toggle('grand');
+    majSchema();
+  });
+  $('b-sch-svg').addEventListener('click', () => {
+    const f = feuille();
+    const r = f ? schema(f, modeSchema, 1100, 700) : { erreur: 'Aucune feuille.' };
+    if (r.erreur) { toast(r.erreur, true); return; }
+    const nom = String(f.nom || 'schema').replace(/[^\w .-]+/g, '-');
+    telecharger(nom + ' - ' + modeSchema + '.svg', r.svg);
+  });
+}
+
 // ---------- Note de calcul ----------
+// En haut : le calcul en direct de la feuille ouverte (bilan.js), recalculé à chaque changement.
+// En dessous, pour le gymnase seulement : la note détaillée produite par Python (calcul.js).
 let calculFait = false;
+let minuteBilan = 0;
+const avecNoteGymnase = () => projet === '' || projet === 'gymnase';
+
+function majBilan() {
+  if ($('calcul').hidden) return;
+  clearTimeout(minuteBilan);
+  minuteBilan = setTimeout(() => dessinerBilan($('bilan'), feuille()), 120);
+}
 
 function basculerCalcul(ouvrir = $('calcul').hidden) {
   const box = $('calcul');
   if (ouvrir && !calculFait) {
-    dessinerCalcul(box);
+    box.innerHTML = '<div class="bilan" id="bilan"></div>' + (avecNoteGymnase() ? '<div class="bilan-fixe" id="calcul-fixe"></div>' : '');
+    if (avecNoteGymnase()) {
+      dessinerCalcul($('calcul-fixe'));
+      $('calcul-fixe').insertAdjacentHTML('afterbegin', '<h2 class="a-titre bilan-sep">Note détaillée du gymnase</h2>');
+    }
+    // Clic sur une barre du graphique : on la sélectionne et on retourne au dessin.
+    $('bilan').addEventListener('click', (ev) => {
+      const id = ev.target.closest('[data-id]')?.dataset.id;
+      if (!id) return;
+      etat.sel.clear();
+      etat.sel.add(id);
+      basculerCalcul(false);
+      rafraichir();
+    });
     calculFait = true;
   }
+  if (ouvrir) dessinerBilan($('bilan'), feuille());
   box.hidden = !ouvrir;
   $('b-calcul-fermer').hidden = !ouvrir;
   $('b-calcul').classList.toggle('principal', ouvrir);
@@ -356,7 +530,7 @@ function brancherCroquis() {
   if (enLigne) $('b-dossier').style.display = 'none'; // pas de dossier du PC en ligne
   $('b-dossier').addEventListener('click', async () => {
     try {
-      const r = await fetch('/api/ouvrir?quoi=croquis', { method: 'POST', headers: { 'X-Atelier': '1' } });
+      const r = await fetch(avecProjet('/api/ouvrir?quoi=croquis'), { method: 'POST', headers: { 'X-Atelier': '1' } });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j.ok === false) throw new Error(j.erreur || 'erreur ' + r.status);
       toast('Dossier des croquis ouvert');
@@ -422,6 +596,25 @@ function signaler(e) {
 window.addEventListener('error', (ev) => signaler(ev.error || ev.message));
 window.addEventListener('unhandledrejection', (ev) => signaler(ev.reason));
 
+// ---------- Projets (sur le PC) : gymnase, salle d'escalade… liste dans projets.json ----------
+async function brancherProjets() {
+  const choix = $('projet');
+  if (enLigne) return;
+  let liste;
+  try {
+    liste = await (await fetch('/api/projets', { cache: 'no-store' })).json();
+  } catch { return; }
+  if (!Array.isArray(liste.projets) || liste.projets.length < 2) return;
+  const ouvert = projet || liste.defaut;
+  choix.innerHTML = liste.projets.map((p) => `<option value="${p.id}"${p.id === ouvert ? ' selected' : ''}>${p.nom.replace(/[<&"]/g, '')}</option>`).join('');
+  choix.hidden = false;
+  document.title = 'Atelier structure · ' + (liste.projets.find((p) => p.id === ouvert)?.nom || '');
+  choix.addEventListener('change', async () => {
+    await sauver(); // rien de perdu en changeant de projet
+    location.href = choix.value === liste.defaut ? location.pathname : '?projet=' + encodeURIComponent(choix.value);
+  });
+}
+
 // ---------- Démarrage ----------
 async function demarrer() {
   initScene();
@@ -433,7 +626,7 @@ async function demarrer() {
     panneau: dessinerPanneau,
     boutons,
     sauver: planifier,
-    vue3d: maj3D,
+    vue3d: () => { maj3D(); majSchema(); majBilan(); },
     onglets,
     finirAction,
   });
@@ -441,12 +634,14 @@ async function demarrer() {
   brancherOnglets();
   brancherReglages();
   brancher3D();
+  brancherSchema();
   brancherCalcul();
   brancherCroquis();
   brancherPartage();
   mesurer();
   new ResizeObserver(() => { if (mesurer()) demanderDessin(); }).observe($('scene'));
 
+  await brancherProjets();
   await chargerListe();
   await charger();
   initHistorique();

@@ -16,6 +16,8 @@ body.a-page.atelier {
 }
 .marque { display: flex; align-items: center; gap: var(--e2); padding-right: var(--e2); white-space: nowrap; }
 .marque svg { width: 22px; height: 22px; }
+.projet { width: auto; max-width: 180px; flex: 0 0 auto; }
+.projet[hidden] { display: none; }
 .feuilles { flex: 1 1 auto; min-width: 0; border-bottom: 0; align-self: stretch; align-items: stretch; }
 .feuilles button { min-height: 55px; }
 /* Versions V1, V2… de la feuille ouverte */
@@ -150,6 +152,20 @@ body.a-page.atelier {
 .espace { flex: 1; }
 #canvas3d { flex: 1; width: 100%; min-height: 0; display: block; cursor: grab; touch-action: none; }
 .carte3d-pied { padding: 4px 10px; border-top: 1px solid var(--ligne); font-size: 11px; }
+
+/* ---------- Carte du schéma structurel ---------- */
+.carte-schema { top: auto; bottom: 64px; left: var(--e3); right: auto; width: min(52%, 640px); height: min(58%, 460px); }
+.carte-schema.grand { top: var(--e3); right: var(--e3); width: auto; height: auto; }
+.sch-vue { flex: 1; min-height: 0; display: flex; overflow: hidden; background: #101010; }
+.sch-vue svg { flex: 1; min-width: 0; }
+.sch-modes { display: flex; gap: 2px; flex: none; }
+.sch-modes button {
+  min-height: 32px; padding: 0 9px; border: 1px solid transparent; border-radius: var(--r-petit);
+  background: none; color: var(--gris); font: inherit; font-size: var(--t-petit); cursor: pointer; white-space: nowrap;
+}
+.sch-modes button:hover { color: var(--blanc); background: var(--surface2); }
+.sch-modes button.on { color: var(--orange); border-color: var(--orange); background: var(--orange-doux); }
+.sch-vide { margin: auto; padding: var(--e4); max-width: 34ch; text-align: center; color: var(--gris); font-size: var(--t-petit); }
 
 /* ---------- Panneau de droite ---------- */
 .panneau {
@@ -322,3 +338,35 @@ svg.c-fleche {
 .menu-feuille strong { display: block; font-size: 14px; }
 .menu-feuille small { display: block; font-size: 12px; color: var(--gris); }
 .carte3d-tete label[hidden] { display: none; }
+
+/* ---------- Section et matière (panneau) ---------- */
+.panneau select.a-champ {
+  width: 100%; min-height: 40px; padding: 0 30px 0 10px; appearance: none; -webkit-appearance: none;
+  border: 1px solid var(--ligne); border-radius: var(--r-petit); background-color: var(--surface2); color: var(--blanc);
+  font: inherit; font-size: var(--t-petit); cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23a0a0a0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat: no-repeat; background-position: right 9px center;
+}
+.panneau select.a-champ:focus { border-color: var(--orange); outline: none; }
+.panneau select.a-champ option, .panneau select.a-champ optgroup { background: var(--surface); color: var(--blanc); }
+.avec-pastille { position: relative; }
+.avec-pastille .pastille {
+  position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+  width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--ligne); pointer-events: none;
+}
+.avec-pastille select.a-champ { padding-left: 29px; }
+
+.jauge-portee { position: relative; height: 10px; margin: 2px 0; border: 1px solid var(--ligne); border-radius: 5px; background: var(--surface2); }
+.jauge-portee .zone { position: absolute; top: 0; bottom: 0; background: var(--orange-doux); border-left: 1px solid var(--orange); border-right: 1px solid var(--orange); }
+.jauge-portee .marque { position: absolute; top: -3px; bottom: -3px; width: 2px; border-radius: 1px; background: var(--blanc); }
+
+/* ---------- Calcul en direct (bilan.js) ---------- */
+.bilan, .bilan-fixe { display: flex; flex-direction: column; gap: var(--e4); }
+.bilan-sep { margin-top: var(--e5); padding-top: var(--e4); border-top: 1px solid var(--ligne); }
+.b-erreur { margin: 0; }
+.b-barres { padding: var(--e2) 0; }
+.b-rang[data-id] { cursor: pointer; }
+.b-rang[data-id]:hover rect:first-child { fill: var(--orange-doux); }
+
+/* Menu d'export de la 3D : un peu plus large pour nommer les logiciels */
+.menu-export { width: 270px; }

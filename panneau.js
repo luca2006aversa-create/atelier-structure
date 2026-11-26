@@ -1,16 +1,21 @@
 // Panneau de droite : réglages précis de ce qui est choisi.
 // Rien de choisi : l'outil en cours, la feuille, le croquis de fond et les gestes.
 import { etat, feuille, modifie, rafraichir, toast, crochets, appliquerVue } from './etat.js';
-import { TYPES_BARRE, FORMES_TREILLIS, NOM_BARRE, NOM_NOEUD, BARRES_PLAN, carteNoeuds, pointCote, estPlan } from './geometrie.js';
+import { TYPES_BARRE, FORMES_TREILLIS, FORMES_TOIT, NOM_BARRE, NOM_NOEUD, BARRES_PLAN, carteNoeuds, pointCote, estPlan } from './geometrie.js';
 import { supprimerSelection, retourner, copier, symetrie, reglagesBarre } from './commandes.js';
 import { apresDeplacement, synchroCotes, couperParNoeuds } from './topologie.js';
 import { choisirFond, urlCroquis } from './croquis.js';
 import { nomFichier } from './sauvegarde.js';
 import { enLigne, telecharger } from './mode.js';
+import { avecProjet } from './projet.js';
 import { svgPapier } from './rendu.js';
 import { picto, ico } from './pictos.js';
 import { etalonnerCroquis, deplacerCroquis, nomOutil } from './outils.js';
 import { demanderDessin } from './scene.js';
+import {
+  MATIERES, ORDRE_MATIERES, FAMILLES, FORMES_SECTION, NOMS_PROFILS,
+  matiereDe, cleMatiere, sectionDe, proprietes, poidsML, texteSection, predim, porteeCourante,
+} from './matieres.js';
 
 // ---------- Petits outils ----------
 const LISTES = { n: 'noeuds', b: 'barres', c: 'cotes', t: 'textes', s: 'traits' };
@@ -20,16 +25,17 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 const arr = (v) => Math.round(v * 1e6) / 1e6;
 const RAD = Math.PI / 180;
 const APPUIS = new Set(['appui', 'encastrement', 'glissant']);
-const RETOURNABLES = new Set(['treillis', 'dalle', 'toile', 'sol', 'porte', 'escalier']);
+const RETOURNABLES = new Set(['treillis', 'toit', 'dalle', 'toile', 'sol', 'porte', 'escalier']);
 const ORDRE_NOEUDS = ['appui', 'encastrement', 'rotule', 'rigide', 'glissant', 'libre'];
 const ORDRE_NOEUDS_PLAN = ['poteau', 'libre'];
 const REGLAGES = {
   't.h': ['treillis', 'h'], 't.n': ['treillis', 'n'], 'd.e': ['dalle', 'e'], 'o.fleche': ['toile', 'fleche'],
   'm.e': ['murp', 'e'], 'cl.e': ['cloison', 'e'], 'es.w': ['escalier', 'w'], 'es.giron': ['escalier', 'giron'],
+  'r.pente': ['toit', 'pente'], 'r.debord': ['toit', 'debord'], 'r.fleche': ['toit', 'fleche'],
 };
 const BARRE = new Set(['b.longueur', 'b.angle', 'b.dx', 'b.dy']);
 // Valeurs qui doivent rester plus grandes que zéro (longueur, épaisseurs, largeur, section, hauteur d'étage).
-const POSITIFS = new Set(['b.longueur', 't.h', 'd.e', 'm.e', 'cl.e', 'es.w', 'p.s', 'f.etage']);
+const POSITIFS = new Set(['b.longueur', 't.h', 'd.e', 'm.e', 'cl.e', 'es.w', 'p.s', 'f.etage', 's.b', 's.h', 's.e']);
 
 // Nombre affiché : virgule, sans zéros inutiles, jamais « -0 ».
 function nb(v, d = 3) {
@@ -40,7 +46,7 @@ function nb(v, d = 3) {
 
 // Nombre tapé : « 3,5 », « 3.5 m », « 30° »… NaN sinon.
 function lireNombre(s) {
-  const t = String(s ?? '').trim().replace(/,/g, '.').replace(/[\s°m]/g, '');
+  const t = String(s ?? '').trim().replace(/,/g, '.').replace(/[\s°m%]/g, '');
   if (!t) return NaN;
   const v = Number(t);
   return Number.isFinite(v) ? v : NaN;
@@ -57,6 +63,9 @@ function valide(cle, v) {
   if (POSITIFS.has(cle)) return v > 1e-6;
   if (cle === 'es.giron') return v >= 0.1;
   if (cle === 't.n') return v >= 1 && v <= 200;
+  if (cle === 'r.pente') return v >= 0 && v <= 500;
+  if (cle === 'r.debord') return v >= 0 && v <= 5;
+  if (cle === 'r.fleche') return v >= 0 && v <= 50;
   return true;
 }
 
@@ -125,6 +134,21 @@ const APERCUS = {
   howe: 'M2 4H98M2 22H98M2 4V22M26 4V22M50 4V22M74 4V22M98 4V22M26 4L2 22M50 4L26 22M50 4L74 22M74 4L98 22',
 };
 
+const APERCUS_TOIT = {
+  '2pentes': 'M4 21L50 6L96 21',
+  '1pente': 'M4 21L96 6',
+  plat: 'M4 13H96',
+  courbe: 'M4 21Q50 -3 96 21',
+};
+
+function grilleFormesToit(actif, id = '') {
+  return '<div class="grille-types deux-col">' + FORMES_TOIT.map(([f, nom]) =>
+    `<button type="button" class="type${f === actif ? ' on' : ''}" data-act="forme-toit" data-v="${f}"${id ? ` data-id="${id}"` : ''}>`
+    + `<svg class="apercu" viewBox="0 0 100 26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="${APERCUS_TOIT[f] || APERCUS_TOIT['2pentes']}"/></svg>`
+    + `<span>${esc(nom)}</span></button>`,
+  ).join('') + '</div>';
+}
+
 function grilleFormes(actif, id = '') {
   return '<div class="grille-types deux-col">' + FORMES_TREILLIS.map(([f, nom]) =>
     `<button type="button" class="type${f === actif ? ' on' : ''}" data-act="forme" data-v="${f}"${id ? ` data-id="${id}"` : ''}>`
@@ -142,6 +166,17 @@ function reglagesType(type, b = null) {
     return bloc(titre(picto('treillis'), nom) + grilleFormes(t.forme, id)
       + champ('Hauteur', 't.h', nb(t.h), { id, unite: 'm', pas: 0.1 })
       + champ('Panneaux', 't.n', nb(t.n, 0), { id, pas: 1 }));
+  }
+  if (type === 'toit') {
+    const t = { ...etat.defauts.toit, ...(b?.toit || {}) };
+    const courbe = t.forme === 'courbe';
+    const plat = t.forme === 'plat';
+    return bloc(titre(picto('toit'), nom) + grilleFormesToit(t.forme, id)
+      + (courbe ? champ('Flèche', 'r.fleche', nb(t.fleche), { id, unite: 'm', pas: 0.1 })
+        : plat ? '' : champ('Pente', 'r.pente', nb(t.pente, 1), { id, unite: '%', pas: 5 }))
+      + champ('Débord', 'r.debord', nb(t.debord), { id, unite: 'm', pas: 0.1 })
+      + discret(plat ? 'Le tracé donne la portée. Retourner : l’épaisseur passe de l’autre côté.'
+        : 'Pente en % (35 % ≈ 19°, 100 % = 45°). Retourner : le toit se renverse.'));
   }
   if (type === 'dalle') {
     const d = { ...etat.defauts.dalle, ...(b?.dalle || {}) };
@@ -184,6 +219,96 @@ const boutonsFin = (avecRetourner, avecSymetrie = true) => bloc(rangee(
   bouton('effacer', 'supprimer', 'Effacer', 'danger'),
 ));
 
+// ---------- Section et matière ----------
+// Barres qui ont une vraie section à régler (largeur × hauteur). Les autres n'ont qu'une matière.
+const SECTION_PLEINE = new Set(['poteau', 'poutre', 'bequille', 'entretoise', 'cable', 'treillis', 'toit']);
+const MATIERE_SEULE = new Set(['dalle', 'toile', 'sol', 'mur', 'murp', 'cloison']);
+const aSection = (t) => SECTION_PLEINE.has(t) || MATIERE_SEULE.has(t);
+const cm = (m) => nb(m * 100, 2);
+
+function choixMatiere(actif, id = '') {
+  const parFam = {};
+  for (const k of ORDRE_MATIERES) (parFam[MATIERES[k].fam] ||= []).push(k);
+  const options = (actif ? '' : '<option value="" selected>Plusieurs matières</option>')
+    + Object.keys(FAMILLES).filter((fa) => parFam[fa]).map((fa) =>
+      `<optgroup label="${esc(FAMILLES[fa])}">` + parFam[fa].map((k) =>
+        `<option value="${k}"${k === actif ? ' selected' : ''}>${esc(MATIERES[k].nom)}</option>`).join('') + '</optgroup>').join('');
+  return `<label class="ligne-champ"><span>Matière</span><div class="avec-pastille">`
+    + `<i class="pastille" style="background:${esc(MATIERES[actif]?.c || 'transparent')}"></i>`
+    + `<select class="a-champ" data-champ="s.mat"${id ? ` data-id="${esc(id)}"` : ''}>${options}</select></div></label>`;
+}
+
+function choixForme(b) {
+  const s = sectionDe(b);
+  return `<div class="ligne-champ"><span>Forme</span><div class="a-bascule bascule-pleine">`
+    + FORMES_SECTION.map(([v, nom]) =>
+      `<button type="button" class="${s.f === v ? 'on' : ''}" data-act="forme-sec" data-v="${v}" data-id="${esc(b.id)}">${esc(nom)}</button>`).join('')
+    + '</div></div>';
+}
+
+function champsSection(b) {
+  const s = sectionDe(b);
+  const o = { id: b.id, unite: 'cm', pas: 1 };
+  if (s.f === 'profil') {
+    return `<label class="ligne-champ"><span>Profil</span><select class="a-champ" data-champ="s.nom" data-id="${esc(b.id)}">`
+      + NOMS_PROFILS.map((n) => `<option value="${esc(n)}"${n === s.nom ? ' selected' : ''}>${esc(n)}</option>`).join('')
+      + '</select></label>';
+  }
+  if (s.f === 'rond') return champ('Diamètre', 's.b', cm(s.b), o);
+  if (s.f === 'tube') return champ('Diamètre', 's.b', cm(s.b), o) + champ('Paroi', 's.e', cm(s.e), { ...o, pas: 0.1 });
+  return champ('Largeur', 's.b', cm(s.b), o) + champ('Hauteur', 's.h', cm(s.h), o);
+}
+
+// Jauge : où tombe la portée réelle dans la fourchette courante de cette section.
+function jaugePortee(L, min, max) {
+  const haut = Math.max(max * 1.35, L * 1.15, 0.5);
+  const pc = (v) => Math.max(0, Math.min(100, (v / haut) * 100));
+  return `<div class="jauge-portee"><i class="zone" style="left:${pc(min).toFixed(1)}%;width:${(pc(max) - pc(min)).toFixed(1)}%"></i>`
+    + `<i class="marque" style="left:${pc(L).toFixed(1)}%"></i></div>`;
+}
+
+// Bloc « Section et matière » : la section d'une barre, et l'aller-retour portée ↔ section.
+function blocSection(b, f) {
+  if (!aSection(b.type)) return '';
+  const mat = matiereDe(b);
+  const A = objet(b.a, f);
+  const B = objet(b.b, f);
+  const L = A && B ? Math.hypot(B.x - A.x, B.y - A.y) : 0;
+  let h = titre(picto('section'), 'Section et matière') + choixMatiere(cleMatiere(b), b.id);
+  if (!SECTION_PLEINE.has(b.type)) {
+    return bloc(h + discret(`${esc(mat.nom)} · ${nb(mat.rho, 2)} kN/m³. L’épaisseur se règle plus haut.`));
+  }
+  h += `<div class="gros">${esc(texteSection(b))}</div>` + choixForme(b) + champsSection(b);
+  const P = proprietes(sectionDe(b));
+  h += discret(`Poids propre : ${nb(poidsML(b), 3)} kN/m · aire ${nb(P.A * 1e4, 0)} cm²`);
+  if (L > 1e-6) {
+    const { min, max, mot } = porteeCourante(b.type, cleMatiere(b), sectionDe(b));
+    const verdict = L < min * 0.85 ? 'Section généreuse : on peut l’affiner.'
+      : L > max * 1.15 ? 'Section faible pour cette ' + mot + '.'
+        : 'Section courante pour cette ' + mot + '.';
+    h += jaugePortee(L, min, max)
+      + discret(`${nb(L, 2)} m de ${mot} · courant de ${nb(min, 2)} à ${nb(max, 2)} m. ${verdict}`);
+  }
+  h += rangee(bouton('predim', 'section', 'Section conseillée', 'principal', '', b.id));
+  if (L > 1e-6) {
+    const p = predim(b.type, cleMatiere(b), L);
+    h += discret(p.note + ' → ' + texteSection({ type: b.type, mat: b.mat, sec: p.sec }));
+  }
+  return bloc(h);
+}
+
+// Même bloc pour plusieurs barres d'un coup.
+function blocSectionPlusieurs(barres) {
+  const avec = barres.filter((b) => b && aSection(b.type));
+  if (!avec.length) return '';
+  const mats = new Set(avec.map((b) => cleMatiere(b)));
+  const pleines = avec.filter((b) => SECTION_PLEINE.has(b.type));
+  return bloc(titre(picto('section'), 'Section et matière')
+    + choixMatiere(mats.size === 1 ? [...mats][0] : '')
+    + (pleines.length ? rangee(bouton('predim', 'section', `Section conseillée (${pleines.length})`, 'principal')) : '')
+    + discret(`${avec.length} éléments · la matière s’applique à tous.`));
+}
+
 // ---------- Contenu selon la sélection ----------
 function blocNoeud(n, f) {
   const plan = estPlan(f);
@@ -225,6 +350,7 @@ function blocBarre(b, f) {
       + discret('Ce bout reste en place, l’autre bouge.'))
     + bloc(titre(picto('grille'), 'Type') + grilleTypesBarre(b.type, plan))
     + reglagesType(b.type, b)
+    + blocSection(b, f)
     + boutonsFin(RETOURNABLES.has(b.type));
 }
 
@@ -267,6 +393,7 @@ function blocPlusieurs(ids, f) {
   return bloc(titre(picto('selection'), 'Sélection') + `<div class="gros">${ids.length} éléments</div>` + discret(detail))
     + (barres.length ? bloc(titre(picto('grille'), plan ? 'Type des éléments' : 'Type des barres') + grilleTypesBarre(memeB, plan)) : '')
     + (noeuds.length ? bloc(titre(picto(plan ? 'n-poteau' : 'n-appui'), plan ? 'Type des nœuds' : 'Liaison des nœuds') + grilleTypesNoeud(memeN, plan)) : '')
+    + blocSectionPlusieurs(barres)
     + boutonsFin(barres.some((b) => RETOURNABLES.has(b.type)));
 }
 
@@ -312,11 +439,12 @@ function blocFeuille(f) {
   return bloc(titre(ico('fichier'), 'Feuille')
     + champTexte('Nom', 'f.nom', f.nom)
     + `<div class="ligne-champ"><span>Type</span><div class="a-bascule bascule-pleine">${types}</div></div>`
-    + (plan ? champ('Hauteur des murs', 'f.etage', nb(f.etage ?? 2.7), { unite: 'm', pas: 0.1 }) : '')
+    + (plan ? champ('Hauteur des murs', 'f.etage', nb(f.etage ?? 2.7), { unite: 'm', pas: 0.1 })
+      : interrupteur('f.sections', 'section', 'Barres à leur vraie largeur', f.sections))
     + discret(`${f.barres.length} ${plan ? 'éléments' : 'barres'} · ${f.noeuds.length} nœuds · ${f.cotes.length} cotes · ${f.textes.length} textes`)
     + rangee(
       enLigne ? bouton('feuille-svg', 'oeil', 'Télécharger le SVG')
-        : `<a class="a-bouton fantome" href="/planches/${encodeURIComponent(nomFichier(f, etat.fi))}" target="_blank" rel="noopener">${picto('oeil')}<span>Ouvrir le SVG</span></a>`,
+        : `<a class="a-bouton fantome" href="${avecProjet('/planches/' + encodeURIComponent(nomFichier(f, etat.fi)))}" target="_blank" rel="noopener">${picto('oeil')}<span>Ouvrir le SVG</span></a>`,
       n > 1 ? bouton('feuille-suppr', 'supprimer', etat.doc.feuilles.some((x) => x.groupe === f.groupe && x !== f) ? `Supprimer la V${f.v}` : 'Supprimer la feuille', 'danger') : '',
     ));
 }
@@ -434,7 +562,8 @@ function construire() {
 }
 
 // ---------- Saisie dans les champs ----------
-const estChamp = (el) => el instanceof HTMLInputElement && !!el.dataset.champ && !!panneau && panneau.contains(el);
+const estChamp = (el) => (el instanceof HTMLInputElement || el instanceof HTMLSelectElement)
+  && !!el.dataset.champ && !!panneau && panneau.contains(el);
 
 function prendrePhoto(el) {
   const f = feuille();
@@ -497,6 +626,17 @@ function appliquer(el, final) {
     o.texte = el.value;
     return true;
   }
+  if (cle === 's.mat') {
+    if (!MATIERES[el.value]) return false;
+    const cibles = o ? [o] : choisis(f).filter((id) => id[0] === 'b').map((id) => objet(id, f));
+    for (const x of cibles) if (x && aSection(x.type)) x.mat = el.value;
+    return true;
+  }
+  if (cle === 's.nom') {
+    if (!o || o.id[0] !== 'b') return false;
+    o.sec = { f: 'profil', nom: el.value };
+    return true;
+  }
   if (cle === 'tr.nom') {
     const t = el.value.trim().slice(0, 3);
     if (t && o) o.trame = { ...(o.trame || {}), nom: t };
@@ -539,6 +679,18 @@ function appliquer(el, final) {
     M.y = arr(F.y + s * dy);
     synchroCotes(f);
     if (final) apresDeplacement([M.id], f);
+    return true;
+  }
+  // Section d'une barre : les champs sont en centimètres, le modèle en mètres.
+  if (cle === 's.b' || cle === 's.h' || cle === 's.e') {
+    if (!o || o.id[0] !== 'b') return false;
+    const s = sectionDe(o);
+    const n = s.f === 'rond' ? { f: 'rond', b: s.b }
+      : s.f === 'tube' ? { f: 'tube', b: s.b, e: s.e }
+        : { f: 'rect', b: s.b, h: s.h };
+    n[cle.slice(2)] = arr(v / 100);
+    if (n.f === 'tube') n.e = Math.min(n.e, n.b / 2.5);
+    o.sec = n;
     return true;
   }
   if (REGLAGES[cle]) {
@@ -597,6 +749,11 @@ function surChange(ev) {
   const el = ev.target;
   if (!estChamp(el) || el.dataset.annule) return;
   if (el.type === 'checkbox') {
+    if (el.dataset.champ === 'f.sections') {
+      const g = feuille();
+      if (g) { g.sections = el.checked; modifie(); }
+      return;
+    }
     const k = feuille()?.croquis;
     if (!k) return;
     if (el.dataset.champ === 'k.inverse') k.inverse = el.checked;
@@ -705,6 +862,49 @@ async function agir(act, v, el) {
         b.treillis = { ...etat.defauts.treillis, ...b.treillis, forme: v };
         modifie();
       } else rafraichir();
+      return;
+    }
+    case 'forme-toit': {
+      etat.defauts.toit = { ...etat.defauts.toit, forme: v };
+      const b = el.dataset.id ? objet(el.dataset.id, f) : null;
+      if (b?.type === 'toit') {
+        b.toit = { ...etat.defauts.toit, ...b.toit, forme: v };
+        modifie();
+      } else rafraichir();
+      return;
+    }
+    case 'forme-sec': {
+      const b = el.dataset.id ? objet(el.dataset.id, f) : null;
+      if (!b) return;
+      const s = sectionDe(b);
+      if (s.f === v) return;
+      const d = Math.min(s.b, s.h);
+      b.sec = v === 'profil' ? { f: 'profil', nom: s.nom || 'IPE 200' }
+        : v === 'rond' ? { f: 'rond', b: d }
+          : v === 'tube' ? { f: 'tube', b: d, e: Math.max(0.003, d / 12) }
+            : { f: 'rect', b: s.b, h: s.h };
+      modifie();
+      return;
+    }
+    case 'predim': {
+      const cibles = el.dataset.id ? [objet(el.dataset.id, f)] : de('b');
+      let n = 0;
+      for (const b of cibles) {
+        if (!b || !SECTION_PLEINE.has(b.type)) continue;
+        const A = objet(b.a, f);
+        const B = objet(b.b, f);
+        const L = A && B ? Math.hypot(B.x - A.x, B.y - A.y) : 0;
+        if (!(L > 1e-6)) continue;
+        const p = predim(b.type, cleMatiere(b), L);
+        b.sec = p.sec;
+        if (b.type === 'treillis' && p.hauteur) {
+          b.treillis = { ...etat.defauts.treillis, ...(b.treillis || {}), h: Math.round(p.hauteur * 20) / 20 };
+        }
+        n++;
+      }
+      if (!n) { toast('Rien à dimensionner ici', true); return; }
+      modifie();
+      toast(n === 1 ? 'Section conseillée : ' + texteSection(cibles[0]) : n + ' sections conseillées');
       return;
     }
     case 'bout-fixe':

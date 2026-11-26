@@ -1,13 +1,14 @@
 // Croquis de fond : une image du dossier croquis posée sous le dessin, à l'échelle.
 import { etat, feuille, modifie, toast, versEcran } from './etat.js';
 import { enLigne, garderImage, lireImages } from './mode.js';
+import { avecProjet } from './projet.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const cache = new Map();
 
 // En ligne : images livrees avec la page (dossier croquis/) + images ajoutees (gardees dans le navigateur).
 const ajoutees = new Map(); // nom -> adresse blob:
-export const urlCroquis = (nom) => ajoutees.get(nom) || (enLigne ? 'croquis/' : '/croquis/') + encodeURIComponent(nom);
+export const urlCroquis = (nom) => ajoutees.get(nom) || (enLigne ? 'croquis/' + encodeURIComponent(nom) : avecProjet('/croquis/' + encodeURIComponent(nom)));
 
 // Taille naturelle d'une image (mise en cache).
 export function image(nom) {
@@ -33,7 +34,7 @@ export async function chargerListe() {
     return etat.croquis;
   }
   try {
-    const r = await fetch('/api/croquis');
+    const r = await fetch(avecProjet('/api/croquis'));
     const j = await r.json();
     etat.croquis = Array.isArray(j.noms) ? j.noms : [];
   } catch {
@@ -128,7 +129,7 @@ export async function envoyerImage(fichier) {
     return;
   }
   try {
-    const r = await fetch('/api/croquis', {
+    const r = await fetch(avecProjet('/api/croquis'), {
       method: 'POST',
       headers: { 'X-Atelier': '1', 'X-Nom': encodeURIComponent(nom), 'Content-Type': fichier.type },
       body: fichier,

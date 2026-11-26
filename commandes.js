@@ -62,6 +62,7 @@ function nomTrame(A, B) {
 export function reglagesBarre(type, A = null, B = null) {
   const D = etat.defauts;
   if (type === 'treillis') return { treillis: { ...D.treillis } };
+  if (type === 'toit') return { toit: { ...D.toit } };
   if (type === 'dalle') return { dalle: { ...D.dalle } };
   if (type === 'toile') return { toile: { ...D.toile } };
   if (type === 'sol') return { sol: { sens: 1 } };
@@ -76,6 +77,7 @@ export function reglagesBarre(type, A = null, B = null) {
 export function inverserCote(b) {
   const D = etat.defauts;
   if (b.type === 'treillis') { b.treillis = { ...D.treillis, ...b.treillis }; b.treillis.sens = b.treillis.sens === -1 ? 1 : -1; return true; }
+  if (b.type === 'toit') { b.toit = { ...D.toit, ...b.toit }; b.toit.sens = b.toit.sens === -1 ? 1 : -1; return true; }
   if (b.type === 'dalle') { b.dalle = { ...D.dalle, ...b.dalle }; b.dalle.sens = b.dalle.sens === -1 ? 1 : -1; return true; }
   if (b.type === 'sol') { b.sol = { sens: 1, ...b.sol }; b.sol.sens = b.sol.sens === -1 ? 1 : -1; return true; }
   if (b.type === 'toile') { b.toile = { ...D.toile, ...b.toile }; b.toile.fleche = -(b.toile.fleche ?? 0.8); return true; }

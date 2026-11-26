@@ -4,10 +4,11 @@ import { TYPES_BARRE, TYPES_NOEUD, FORMES_TREILLIS } from './geometrie.js';
 import { svgPapier } from './rendu.js';
 import { ico } from './pictos.js';
 import { enLigne } from './mode.js';
+import { projet, avecProjet, cleLocale } from './projet.js';
 import { chargerTout, synchro, enAttente, peutEcrire, session } from './partage.js';
 import { borne } from './geometrie.js';
 
-const CLE = 'atelier-structure';
+const CLE = cleLocale('atelier-structure');
 let version = 0;
 let versionSauvee = 0;
 let minuteur = 0;
@@ -73,7 +74,7 @@ async function envoyer(v) {
   });
   etatSauvegarde('attente', 'Enregistrement…');
   try {
-    const r = await fetch('/api/sauver', {
+    const r = await fetch(avecProjet('/api/sauver'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Atelier': '1' },
       body: JSON.stringify({ doc: etat.doc, svgs }),
@@ -97,7 +98,7 @@ window.addEventListener('beforeunload', (ev) => {
   const corps = JSON.stringify({ doc: etat.doc, svgs: {} });
   if (new TextEncoder().encode(corps).length < 60000) {
     try {
-      fetch('/api/sauver', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json', 'X-Atelier': '1' }, body: corps });
+      fetch(avecProjet('/api/sauver'), { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json', 'X-Atelier': '1' }, body: corps });
     } catch { /* tant pis */ }
   }
   ev.preventDefault();
@@ -127,7 +128,7 @@ export async function charger() {
     return;
   }
   try {
-    const r = await fetch('/api/charger', { cache: 'no-store' });
+    const r = await fetch(avecProjet('/api/charger'), { cache: 'no-store' });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.erreur || 'erreur ' + r.status);
     doc = j.doc;
@@ -257,6 +258,8 @@ function reparer(doc) {
 
 // ---------- Document de départ : ma lecture des croquis, à corriger ----------
 function docDepart() {
+  // Autre projet que le gymnase : un plan et une coupe vides, à dessiner.
+  if (projet) return { feuilles: [feuilleVide('Plan', 0, 'plan'), feuilleVide('Coupe', 1)] };
   const f = feuilleVide('Lecture Claude');
   const N = (id, x, y, type = 'libre') => ({ id, x, y, type });
   f.noeuds = [
