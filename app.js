@@ -26,16 +26,16 @@ const $ = (id) => document.getElementById(id);
 const CLE_REGLAGES = 'atelier-structure-reglages';
 let vue3d = null;
 
-// ---------- Onglets des feuilles et versions (V1, V2, V3…) ----------
-// Une feuille peut avoir plusieurs versions : même « groupe », numéro « v ». Un onglet par groupe.
-const choixGroupe = new Map(); // groupe → id de la version ouverte la dernière fois
+// ---------- Onglets des feuilles et versions du projet (V1, V2, V3…) ----------
+// Une version = tout le projet : ses coupes et ses plans. Chaque feuille garde son « groupe » d'une version
+// à l'autre ; « v » dit à quelle version elle appartient. Les onglets montrent la version ouverte.
+const vOuverte = () => feuille()?.v || 1;
+const dansVersion = (v = vOuverte()) => etat.doc.feuilles.filter((f) => f.v === v);
+const numerosVersions = () => [...new Set(etat.doc.feuilles.map((f) => f.v))].sort((a, b) => a - b);
 
 function groupes() {
   const g = new Map();
-  for (const f of etat.doc.feuilles) {
-    if (!g.has(f.groupe)) g.set(f.groupe, []);
-    g.get(f.groupe).push(f);
-  }
+  for (const f of dansVersion()) if (!g.has(f.groupe)) g.set(f.groupe, f);
   return g;
 }
 
@@ -44,41 +44,37 @@ function onglets() {
   const vbox = $('versions');
   if (!box || !etat.doc) return;
   const ouverte = feuille();
-  if (ouverte) choixGroupe.set(ouverte.groupe, ouverte.id);
-  const cle = etat.doc.feuilles.map((f) => [f.id, f.nom, f.groupe, f.v].join('|')).join('/') + '#' + ouverte?.id;
+  const cle = etat.doc.feuilles.map((f) => [f.id, f.nom, f.groupe, f.v, f.type].join('|')).join('/') + '#' + ouverte?.id;
   if (box.dataset.cle === cle) return;
   box.dataset.cle = cle;
   box.textContent = '';
-  const g = groupes();
-  for (const [nom, vs] of g) {
-    const voulue = ouverte?.groupe === nom ? ouverte.id : choixGroupe.get(nom);
-    const f = vs.find((x) => x.id === voulue) || vs[vs.length - 1];
+  for (const f of dansVersion()) {
     const b = document.createElement('button');
     b.type = 'button';
     b.dataset.id = f.id;
-    b.textContent = f.nom + (vs.length > 1 ? ' · V' + f.v : '');
+    b.textContent = f.nom;
     b.title = f.nom + ' (double-clic : renommer)';
-    if (ouverte?.groupe === nom) b.className = 'on';
+    if (f.id === ouverte?.id) b.className = 'on';
     box.appendChild(b);
   }
   // L'onglet ouvert reste visible, même au bout d'une longue rangée.
   box.querySelector('button.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  // Versions de la feuille ouverte
+  // Versions du projet
   vbox.textContent = '';
-  for (const f of g.get(ouverte?.groupe) || []) {
+  for (const v of numerosVersions()) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.dataset.id = f.id;
-    b.textContent = 'V' + f.v;
-    b.title = 'Version ' + f.v;
-    if (f.id === ouverte.id) b.className = 'on';
+    b.dataset.v = v;
+    b.textContent = 'V' + v;
+    b.title = 'Version ' + v + ' du projet : ' + dansVersion(v).length + ' feuilles';
+    if (v === vOuverte()) b.className = 'on';
     vbox.appendChild(b);
   }
   const plus = document.createElement('button');
   plus.type = 'button';
   plus.className = 'plus';
   plus.dataset.act = 'version';
-  plus.title = 'Nouvelle version (copie de V' + (ouverte?.v || 1) + ')';
+  plus.title = 'Nouvelle version du projet (copie de toutes les feuilles de V' + vOuverte() + ')';
   plus.textContent = '+ V';
   vbox.appendChild(plus);
 }
@@ -88,19 +84,39 @@ const allerId = (id) => {
   if (i >= 0 && i !== etat.fi) allerFeuille(i);
 };
 
+// Changer de version : on reste sur la même feuille (même groupe) si elle existe dans l'autre version.
+function allerVersion(v) {
+  const f = feuille();
+  if (!f || f.v === v) return;
+  memoriserVue();
+  etat.sel.clear();
+  const cible = etat.doc.feuilles.find((x) => x.v === v && x.groupe === f.groupe) || dansVersion(v)[0];
+  if (cible) allerId(cible.id);
+}
+
+// « + V » : copie de toute la version ouverte (coupes et plans), liens coupe ↔ plan refaits entre les copies.
 function nouvelleVersion() {
   const f = feuille();
   if (!f) return;
   memoriserVue();
-  const vs = etat.doc.feuilles.filter((x) => x.groupe === f.groupe);
-  const n = copie(f);
-  n.id = uid('f');
-  n.v = Math.max(...vs.map((x) => x.v || 1)) + 1;
-  etat.doc.feuilles.push(n);
+  const v0 = f.v;
+  const v1 = Math.max(...numerosVersions()) + 1;
+  const neuves = new Map(); // ancien id → copie
+  for (const x of dansVersion(v0)) {
+    const n = copie(x);
+    n.id = uid('f');
+    n.v = v1;
+    n.vp = 1;
+    neuves.set(x.id, n);
+  }
+  for (const n of neuves.values()) {
+    if (n.paire) { const p = neuves.get(n.paire); if (p) n.paire = p.id; else delete n.paire; }
+    etat.doc.feuilles.push(n);
+  }
   trier(etat.doc.feuilles);
-  allerId(n.id);
+  allerId(neuves.get(f.id).id);
   modifie();
-  toast('Version V' + n.v + ' créée (copie de V' + (f.v || 1) + ')');
+  toast('Version V' + v1 + ' créée : copie des ' + neuves.size + ' feuilles de V' + v0);
 }
 
 // Coupe ↔ plan : deux vues séparées d'un même bâtiment. On saute vers la feuille liée,
@@ -121,6 +137,7 @@ function basculerVue(plan) {
   memoriserVue();
   const base = f.nom.replace(/\s*·\s*(plan|coupe)$/i, '');
   const n = feuilleVide(base + (plan ? ' · plan' : ' · coupe'), (f.ordre ?? 0) + 0.5, plan ? 'plan' : 'coupe');
+  n.v = f.v;
   n.paire = f.id;
   f.paire = n.id;
   n.trois_d = { ...(f.trois_d || {}) }; // même entraxe : le plan et la coupe parlent des mêmes portiques
@@ -141,7 +158,7 @@ function brancherOnglets() {
     const b = ev.target.closest('button');
     if (!b) return;
     if (b.dataset.act === 'version') nouvelleVersion();
-    else allerId(b.dataset.id);
+    else if (b.dataset.v) allerVersion(+b.dataset.v);
   });
   // Double-clic sur un onglet : on vide la sélection et on donne la main au champ « Nom » du panneau.
   box.addEventListener('dblclick', (ev) => {
@@ -181,6 +198,7 @@ function brancherOnglets() {
     while (noms.has(base + n)) n++;
     const ordre = Math.max(0, ...etat.doc.feuilles.map((f) => f.ordre ?? 0)) + 1;
     const f = feuilleVide(base + n, ordre, type);
+    f.v = vOuverte();
     etat.doc.feuilles.push(f);
     trier(etat.doc.feuilles);
     allerId(f.id);
@@ -321,14 +339,25 @@ function valeur3D(id, el) {
 }
 
 function brancher3D() {
-  vue3d = new Vue3D($('canvas3d'), () => ({ feuille: feuille(), sel: etat.sel }));
-  // Clic dans la 3D : sélectionne la barre ou le mur visé (clic dans le vide : rien)
-  vue3d.choisir = (id) => {
+  vue3d = new Vue3D($('canvas3d'), () => ({ feuille: feuille(), sel: etat.sel, feuilles: dansVersion(), tout: vue3d.tout }));
+  vue3d.tout = true;
+  // Clic dans la 3D : sélectionne la barre ou le mur visé (clic dans le vide : rien).
+  // Dans « Tout », un clic sur une autre feuille l'ouvre d'abord.
+  vue3d.choisir = (id, fid) => {
+    if (id && fid && fid !== feuille()?.id) allerId(fid);
     if (!id && !etat.sel.size) return;
     etat.sel.clear();
     if (id) etat.sel.add(id);
     rafraichir();
   };
+  const bTout = $('b-3d-tout');
+  bTout.addEventListener('click', () => {
+    vue3d.tout = !vue3d.tout;
+    bTout.classList.toggle('on', vue3d.tout);
+    bTout.setAttribute('aria-pressed', String(vue3d.tout));
+    bTout.title = vue3d.tout ? 'Tout le bâtiment (toutes les feuilles de la version)' : 'Cette feuille seulement';
+    vue3d.demander();
+  });
   new ResizeObserver(() => { if (!carte().hidden) vue3d.demander(); }).observe($('canvas3d'));
   $('b-3d').addEventListener('click', () => basculer3D());
   brancherExport();

@@ -24,7 +24,7 @@ const GROUPES = {
   ],
   plan: [
     COMMUNS,
-    ['Plan', [['murp', 'Mur', 'M'], ['cloison', 'Cloison', 'L'], ['n-poteau', 'Poteau', 'P']]],
+    ['Plan', [['murp', 'Mur', 'M'], ['cloison', 'Cloison', 'L'], ['poutrep', 'Poutre', 'B'], ['n-poteau', 'Poteau', 'P']]],
     ['Ouvertures', [['porte', 'Porte', 'O'], ['fenetre', 'Fenêtre', 'N']]],
     ['Repères', [['trame', 'Trame', 'A'], ['escalier', 'Escalier', 'E']]],
   ],

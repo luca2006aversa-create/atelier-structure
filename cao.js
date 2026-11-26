@@ -18,6 +18,7 @@ const CERCLE = 16; // côtés d'une section ronde
 const FAMILLES = {
   poteau: ['POTEAU', 'IFCCOLUMN', 'COLUMN'],
   poutre: ['POUTRE', 'IFCBEAM', 'BEAM'],
+  poutrep: ['POUTRE', 'IFCBEAM', 'BEAM'],
   panne: ['PANNE', 'IFCBEAM', 'JOIST'],
   bequille: ['BEQUILLE', 'IFCMEMBER', 'STRUT'],
   entretoise: ['ENTRETOISE', 'IFCMEMBER', 'BRACE'],

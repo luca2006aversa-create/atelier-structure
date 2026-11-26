@@ -238,7 +238,7 @@ const boutonsFin = (avecRetourner, avecSymetrie = true) => bloc(rangee(
 
 // ---------- Section et matière ----------
 // Barres qui ont une vraie section à régler (largeur × hauteur). Les autres n'ont qu'une matière.
-const SECTION_PLEINE = new Set(['poteau', 'poutre', 'bequille', 'entretoise', 'cable', 'treillis', 'toit']);
+const SECTION_PLEINE = new Set(['poteau', 'poutre', 'poutrep', 'bequille', 'entretoise', 'cable', 'treillis', 'toit']);
 const MATIERE_SEULE = new Set(['dalle', 'toile', 'sol', 'mur', 'murp', 'cloison']);
 const aSection = (t) => SECTION_PLEINE.has(t) || MATIERE_SEULE.has(t);
 const cm = (m) => nb(m * 100, 2);
@@ -457,6 +457,7 @@ function blocPlusieurs(ids, f) {
 const AIDES_PLAN = {
   murp: 'Clique le début du mur, puis la suite. Les coins se raccordent tout seuls. Double-clic ou Entrée pour finir.',
   cloison: 'Clique le début de la cloison, puis la suite. Les coins se raccordent tout seuls. Double-clic ou Entrée pour finir.',
+  poutrep: 'Clique le début de la poutre, puis la fin. Elle se dessine en tirets ; en 3D elle passe sous le haut des murs.',
   porte: 'Clique les deux bouts de la porte, sur un mur. Le mur s’ouvre tout seul.',
   fenetre: 'Clique les deux bouts de la fenêtre, sur un mur.',
   trame: 'Clique le début de l’axe, puis la fin. La bulle se met au début.',
@@ -497,13 +498,27 @@ function blocFeuille(f) {
     + champTexte('Nom', 'f.nom', f.nom)
     + `<div class="ligne-champ"><span>Type</span><div class="a-bascule bascule-pleine">${types}</div></div>`
     + (plan ? champ('Hauteur des murs', 'f.etage', nb(f.etage ?? 2.7), { unite: 'm', pas: 0.1 })
-      : interrupteur('f.sections', 'section', 'Barres à leur vraie épaisseur', f.sections !== false))
+      + champ('Niveau du plancher', 'f.niveau', nb(f.niveau || 0), { unite: 'm', pas: 0.1 })
+      + discret('Niveau : hauteur où ce plan est posé dans la 3D de tout le bâtiment (0 = rez-de-chaussée).')
+      : interrupteur('f.sections', 'section', 'Barres à leur vraie épaisseur', f.sections !== false)
+      + blocPlace(f))
     + discret(`${f.barres.length} ${plan ? 'éléments' : 'barres'} · ${f.noeuds.length} nœuds · ${f.cotes.length} cotes · ${f.textes.length} textes`)
     + rangee(
       enLigne ? bouton('feuille-svg', 'oeil', 'Télécharger le SVG')
         : `<a class="a-bouton fantome" href="${avecProjet('/planches/' + encodeURIComponent(nomFichier(f, etat.fi)))}" target="_blank" rel="noopener">${picto('oeil')}<span>Ouvrir le SVG</span></a>`,
       n > 1 ? bouton('feuille-suppr', 'supprimer', etat.doc.feuilles.some((x) => x.groupe === f.groupe && x !== f) ? `Supprimer la V${f.v}` : 'Supprimer la feuille', 'danger') : '',
     ));
+}
+
+// Place de la coupe dans le plan (vue de dessus) : sert à la 3D de tout le bâtiment.
+function blocPlace(f) {
+  const t = f.trois_d || {};
+  const sens = [[0, 'Le long de x'], [90, 'Le long de y']].map(([v, nom]) =>
+    `<button type="button" class="${(+t.angle === 90) === (v === 90) ? 'on' : ''}" data-act="feuille-angle" data-v="${v}">${nom}</button>`).join('');
+  return champ('Place x', 'f.x0', nb(+t.x0 || 0, 2), { unite: 'm', pas: 0.5 })
+    + champ('Place y', 'f.y0', nb(+t.y0 || 0, 2), { unite: 'm', pas: 0.5 })
+    + `<div class="ligne-champ"><span>Sens</span><div class="a-bascule bascule-pleine">${sens}</div></div>`
+    + discret('Où la coupe passe dans le plan. La 3D « Tout » la pose là, avec les plans.');
 }
 
 function blocCroquis(f) {
@@ -766,6 +781,14 @@ function appliquer(el, final) {
     f.etage = arr(v);
     return true;
   }
+  if (cle === 'f.niveau') {
+    f.niveau = arr(v);
+    return true;
+  }
+  if (cle === 'f.x0' || cle === 'f.y0') {
+    f.trois_d = { entraxe: 6, nombre: 4, ...f.trois_d, [cle.slice(2)]: arr(v) };
+    return true;
+  }
   if (cle === 'c.decalage') {
     o.decalage = arr(v);
     return true;
@@ -960,6 +983,14 @@ async function agir(act, v, el) {
       if (n) modifie();
       return;
     }
+    case 'feuille-angle': {
+      const t = { entraxe: 6, nombre: 4, ...f.trois_d };
+      if ((+t.angle === 90) === (v === '90')) return;
+      if (v === '90') t.angle = 90; else delete t.angle;
+      f.trois_d = t;
+      modifie();
+      return;
+    }
     case 'feuille-type': {
       const plan = v === 'plan';
       if (estPlan(f) === plan) return;
@@ -1039,9 +1070,11 @@ async function agir(act, v, el) {
     }
     case 'feuille-suppr': {
       if (etat.doc.feuilles.length < 2) return;
-      if (!confirm(`Supprimer la feuille « ${f.nom} » ?\nCtrl+Z la fait revenir.`)) return;
+      if (!confirm(`Supprimer la feuille « ${f.nom} » de la version V${f.v || 1} ?\nCtrl+Z la fait revenir.`)) return;
       crochets.finirAction?.();
-      const soeurs = etat.doc.feuilles.filter((x) => x.groupe === f.groupe && x !== f);
+      for (const x of etat.doc.feuilles) if (x.paire === f.id) delete x.paire;
+      const memeV = etat.doc.feuilles.filter((x) => x.v === f.v && x !== f);
+      const soeurs = memeV.length ? memeV : etat.doc.feuilles.filter((x) => x !== f);
       etat.doc.feuilles.splice(etat.fi, 1);
       const voisine = soeurs.length ? etat.doc.feuilles.indexOf(soeurs[soeurs.length - 1]) : -1;
       etat.fi = voisine >= 0 ? voisine : Math.min(etat.fi, etat.doc.feuilles.length - 1);

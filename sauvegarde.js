@@ -198,7 +198,7 @@ const positif = (v, d) => (fini(v) && +v > 0 ? +v : d);
 // type : 'coupe' (vue de côté) ou 'plan' (vue de dessus, avec la hauteur des murs pour la 3D).
 export function feuilleVide(nom, ordre = 0, type = 'coupe') {
   const id = uid('f');
-  const f = { id, groupe: id, v: 1, ordre, nom, noeuds: [], barres: [], cotes: [], textes: [], traits: [], trois_d: { entraxe: 6, nombre: 4 } };
+  const f = { id, groupe: id, v: 1, vp: 1, ordre, nom, noeuds: [], barres: [], cotes: [], textes: [], traits: [], trois_d: { entraxe: 6, nombre: 4 } };
   if (type === 'plan') { f.type = 'plan'; f.etage = 2.7; }
   return f;
 }
@@ -246,14 +246,58 @@ function reparer(doc) {
     f.traits = liste(f.traits, 's').filter((s) => Array.isArray(s.pts) && s.pts.length > 1 && s.pts.every((p) => Array.isArray(p) && fini(p[0]) && fini(p[1])));
     const k = f.croquis;
     if (k && !(k.nom && k.w > 0 && k.h > 0 && k.echelle > 0 && fini(k.cx) && fini(k.cy))) delete f.croquis;
-    f.trois_d = { entraxe: num(f.trois_d?.entraxe, 6), nombre: num(f.trois_d?.nombre, 4) };
+    const t3 = f.trois_d || {};
+    f.trois_d = { entraxe: num(t3.entraxe, 6), nombre: num(t3.nombre, 4) };
+    // Place de la coupe dans le bâtiment (vue de dessus) : origine et sens. Sert à la 3D de l'ensemble.
+    if (fini(t3.x0)) f.trois_d.x0 = +t3.x0;
+    if (fini(t3.y0)) f.trois_d.y0 = +t3.y0;
+    if (+t3.angle === 90) f.trois_d.angle = 90;
+    if (f.type === 'plan') f.niveau = num(f.niveau, 0);
+    else delete f.niveau;
     if (typeof f.groupe !== 'string' || !f.groupe) f.groupe = f.id; // les versions d'une même feuille ont le même groupe
     f.v = Math.max(1, Math.round(num(f.v, 1)));
     f.ordre = num(f.ordre, out.feuilles.length);
     out.feuilles.push(f);
   }
   if (!out.feuilles.length) out.feuilles.push(feuilleVide('Feuille 1'));
+  versionsProjet(out.feuilles);
   return out;
+}
+
+// Versions du projet : V2 regroupe toutes les coupes et tous les plans de V2.
+// Les anciens fichiers numérotaient chaque feuille à part : on complète chaque version avec la
+// dernière version connue des feuilles qui y manquent (une seule fois : la marque « vp » le retient).
+function versionsProjet(feuilles) {
+  const dejaFait = feuilles.some((f) => f.vp);
+  if (!dejaFait) {
+    const max = Math.max(1, ...feuilles.map((f) => f.v));
+    const pris = new Set(feuilles.map((f) => f.id));
+    for (let n = 2; n <= max; n++) {
+      const groupes = new Map();
+      for (const f of feuilles) if (f.v <= n && (!groupes.has(f.groupe) || groupes.get(f.groupe).v < f.v)) groupes.set(f.groupe, f);
+      for (const [g, f] of groupes) {
+        if (f.v === n) continue;
+        const c = JSON.parse(JSON.stringify(f));
+        let id = 'f' + g.replace(/^f/, '') + 'v' + n;
+        while (pris.has(id)) id += 'x';
+        pris.add(id);
+        c.id = id;
+        c.v = n;
+        feuilles.push(c);
+      }
+    }
+  }
+  // Liens coupe ↔ plan : toujours vers la feuille de la même version.
+  for (const f of feuilles) {
+    f.vp = 1;
+    if (!f.paire) continue;
+    const p = feuilles.find((x) => x.id === f.paire);
+    if (!p) { delete f.paire; continue; }
+    if (p.v === f.v) continue;
+    const q = feuilles.find((x) => x.groupe === p.groupe && x.v === f.v);
+    if (q) f.paire = q.id; else delete f.paire;
+  }
+  feuilles.sort((a, b) => (a.ordre ?? 0) - (b.ordre ?? 0) || String(a.groupe).localeCompare(String(b.groupe)) || a.v - b.v);
 }
 
 // ---------- Document de départ : ma lecture des croquis, à corriger ----------

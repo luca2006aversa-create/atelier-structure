@@ -54,6 +54,7 @@ export const FORMES_SECTION = [['rect', 'Rectangle'], ['rond', 'Rond'], ['tube',
 const DEFAUTS = {
   poteau: ['gl24h', 'rect', 0.2, 0.2],
   poutre: ['gl24h', 'rect', 0.12, 0.4],
+  poutrep: ['gl24h', 'rect', 0.12, 0.4],
   bequille: ['gl24h', 'rect', 0.16, 0.16],
   entretoise: ['c24', 'rect', 0.08, 0.16],
   membrure: ['gl24h', 'rect', 0.16, 0.3],

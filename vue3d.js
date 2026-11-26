@@ -2,7 +2,7 @@
 // Deux modes : « volumes » (vraies sections, couleur de la matière, faces ombrées) et « traits » (fil de fer).
 import {
   primitivesBarre, barresEnSections, pannesCoupe, PANNE, carteNoeuds, borne, estPlan, analysePlan, bandeMur, epaisseur, MURS,
-  H_PORTE, H_ALLEGE, H_LINTEAU, sub, add, mul, unite, normale, dist,
+  H_PORTE, H_ALLEGE, H_LINTEAU, sub, add, mul, unite, normale, dist, placeCoupe,
 } from './geometrie.js';
 import { sectionDe, matiereDe, MATIERES } from './matieres.js';
 
@@ -223,7 +223,8 @@ export class Vue3D {
       fin();
       if (!clic || !this.choisir) return;
       const r = canvas.getBoundingClientRect();
-      this.choisir(this.viser(ev.clientX - r.left, ev.clientY - r.top));
+      const v = this.viser(ev.clientX - r.left, ev.clientY - r.top);
+      this.choisir(v ? v.id : null, v ? v.fid : null);
     });
     canvas.addEventListener('pointercancel', fin);
     canvas.addEventListener('wheel', (ev) => {
@@ -247,7 +248,7 @@ export class Vue3D {
       const l2 = vx * vx + vy * vy || 1;
       const t = borne(((x - s.A[0]) * vx + (y - s.A[1]) * vy) / l2, 0, 1);
       const d = Math.hypot(x - s.A[0] - t * vx, y - s.A[1] - t * vy);
-      if (d < dmin) { dmin = d; seg = { id: s.id, prof: s.A[2] + t * (s.B[2] - s.A[2]) }; }
+      if (d < dmin) { dmin = d; seg = { id: s.id, fid: s.fid, prof: s.A[2] + t * (s.B[2] - s.A[2]) }; }
     }
     let face = null;
     for (const f of pk.faces) {
@@ -257,10 +258,10 @@ export class Vue3D {
         const [xj, yj] = f.P[j];
         if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) dedans = !dedans;
       }
-      if (dedans && (!face || f.d < face.prof)) face = { id: f.id, prof: f.d };
+      if (dedans && (!face || f.d < face.prof)) face = { id: f.id, fid: f.fid, prof: f.d };
     }
-    if (seg && (!face || !pk.opaque || seg.prof <= face.prof * 1.02)) return seg.id;
-    return face ? face.id : null;
+    if (seg && (!face || !pk.opaque || seg.prof <= face.prof * 1.02)) return seg;
+    return face;
   }
 
   recentrer(redessiner = true) {
@@ -290,12 +291,17 @@ export class Vue3D {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#0e0e0e';
     ctx.fillRect(0, 0, w, h);
-    const { feuille, sel } = this.fournir();
+    const { feuille, sel, feuilles, tout } = this.fournir();
     const vol = this.volumes !== false;
     this.picks = { segs: [], faces: [], opaque: vol };
+    // « Tout » : toutes les coupes et tous les plans de la version, chacun à sa place.
+    const ens = !!feuille && tout && feuilles && feuilles.length > 1;
     const M = !feuille ? { segs: [], faces: [] }
-      : estPlan(feuille) ? modelePlan(feuille)
-        : vol ? volumes3D(feuille) : modele3D(feuille);
+      : ens ? modeleEnsemble(feuilles, vol, feuille)
+        : estPlan(feuille) ? modelePlan(feuille)
+          : vol ? volumes3D(feuille) : modele3D(feuille);
+    // Sélection : les id ne valent que dans la feuille ouverte.
+    const pris = (o) => sel.has(o.id) && (!o.fid || o.fid === feuille.id);
     if (!M.segs.length && !M.faces.length) {
       ctx.fillStyle = '#8c8c8c';
       ctx.font = '14px "Inter Tight", sans-serif';
@@ -357,12 +363,12 @@ export class Vue3D {
       faces.push({ P, d: P.reduce((s, p) => s + p[2], 0) / P.length, fa });
     }
     faces.sort((a, b) => b.d - a.d);
-    for (const { P, d, fa } of faces) if (fa.id) this.picks.faces.push({ P, d, id: fa.id });
+    for (const { P, d, fa } of faces) if (fa.id) this.picks.faces.push({ P, d, id: fa.id, fid: fa.fid });
     for (const s of M.segs) {
       if (!s.id || s.role === 'site') continue;
       const A = proj(s.a);
       const B = proj(s.b);
-      if (A && B) this.picks.segs.push({ A, B, id: s.id });
+      if (A && B) this.picks.segs.push({ A, B, id: s.id, fid: s.fid });
     }
     for (const { P, fa } of faces) {
       ctx.beginPath();
@@ -370,7 +376,7 @@ export class Vue3D {
       for (let i = 1; i < P.length; i++) ctx.lineTo(P[i][0], P[i][1]);
       ctx.closePath();
       if (vol && fa.c) {
-        const base = sel.has(fa.id) ? '#ff5a1f' : fa.c;
+        const base = pris(fa) ? '#ff5a1f' : fa.c;
         const k = eclairage(fa.pts) * (fa.att === undefined ? 1 : fa.att);
         ctx.globalAlpha = fa.al === undefined ? 1 : fa.al;
         ctx.fillStyle = teinte(base, k);
@@ -380,16 +386,16 @@ export class Vue3D {
         ctx.stroke();
       } else {
         ctx.globalAlpha = 1;
-        ctx.fillStyle = sel.has(fa.id) ? 'rgba(255,90,31,.18)' : fa.st === 'sol' ? 'rgba(140,140,140,.07)' : fa.st === 'toit' ? 'rgba(255,255,255,.13)' : 'rgba(255,255,255,.07)';
+        ctx.fillStyle = pris(fa) ? 'rgba(255,90,31,.18)' : fa.st === 'sol' ? 'rgba(140,140,140,.07)' : fa.st === 'toit' ? 'rgba(255,255,255,.13)' : 'rgba(255,255,255,.07)';
         ctx.fill();
       }
     }
     ctx.globalAlpha = 1;
     // Traits : site, lisses, secondaires, principaux, puis la sélection par-dessus
     for (const role of ['site', 'lisse', 'secondaire', 'principal']) {
-      for (const s of M.segs) if (s.role === role && !sel.has(s.id)) trait(s.a, s.b, ...TRAIT[role]);
+      for (const s of M.segs) if (s.role === role && !pris(s)) trait(s.a, s.b, ...TRAIT[role], s.autre ? 0.5 : 1);
     }
-    for (const s of M.segs) if (sel.has(s.id)) trait(s.a, s.b, '#ff5a1f', 2);
+    for (const s of M.segs) if (pris(s)) trait(s.a, s.b, '#ff5a1f', 2);
     ctx.globalAlpha = 1;
   }
 }
@@ -437,6 +443,11 @@ export function modelePlan(f) {
         boite3D(p, 0, Math.min(H_ALLEGE, H), role, b.id, segs, faces, 'mur', col);
         if (H > H_LINTEAU) boite3D(p, H_LINTEAU, H, role, b.id, segs, faces, 'mur', col);
       }
+    } else if (b.type === 'poutrep') {
+      // Poutre : le dessus au niveau du haut des murs, sa hauteur de section en dessous.
+      const S = sectionDe(b);
+      const hs = Math.min(H, Math.max(0.02, S.h || 0.4));
+      boite3D(pied(A, B, Math.max(0.02, S.b || 0.12)), H - hs, H, 'principal', b.id, segs, faces, 'mur', col);
     } else if (b.type === 'fenetre') {
       const h0 = Math.min(H_ALLEGE, H);
       const h1 = Math.min(H_LINTEAU, H);
@@ -483,6 +494,31 @@ export function modelePlan(f) {
     if (n.type !== 'poteau') continue;
     const h = Math.max(0.05, +n.s || 0.3) / 2;
     boite3D([[n.x - h, n.y - h], [n.x + h, n.y - h], [n.x + h, n.y + h], [n.x - h, n.y + h]], 0, H, 'principal', n.id, segs, faces, 'mur', MATIERES.ba30.c);
+  }
+  return { segs, faces };
+}
+
+// ---------- Ensemble : toute la version dans une seule 3D ----------
+// Plans : montés à leur niveau. Coupes : posées dans le plan par leur place (x0, y0, angle).
+// Chaque trait et chaque face garde l'id de sa feuille (fid) : un clic ouvre la bonne feuille.
+export function modeleEnsemble(feuilles, vol, ouverte) {
+  const segs = [];
+  const faces = [];
+  for (const f of feuilles) {
+    const autre = !!ouverte && f.id !== ouverte.id;
+    let M;
+    let T;
+    if (estPlan(f)) {
+      M = modelePlan(f);
+      const h = +f.niveau || 0;
+      T = (p) => [p[0], p[1] + h, p[2]];
+    } else {
+      M = vol ? volumes3D(f) : modele3D(f);
+      const place = placeCoupe(f);
+      T = (p) => { const q = place(p[0], p[2]); return [q[0], p[1], q[1]]; };
+    }
+    for (const sg of M.segs) segs.push({ ...sg, a: T(sg.a), b: T(sg.b), fid: f.id, autre });
+    for (const fa of M.faces) faces.push({ ...fa, pts: fa.pts.map(T), fid: f.id, att: (fa.att === undefined ? 1 : fa.att) * (autre ? 0.8 : 1) });
   }
   return { segs, faces };
 }

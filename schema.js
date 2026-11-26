@@ -320,10 +320,11 @@ export function schema(f, mode = 'statique', W = 760, H = 480) {
     'Réaction max ' + nb(RE, 0) + ' kN',
   ].join('   ·   ');
   bas += texte(14, 20, titre, BLANC, 12, 'start');
+  if (R.alerte) bas += texte(14, 38, R.alerte, ORANGE, 11, 'start');
   bas += texte(14, H - 11, info, GRIS, 11, 'start');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" height="100%">`
     + `<rect width="${W}" height="${H}" fill="${FOND}"/>${corps}${bas}</svg>`;
-  return { svg, R, resume: info };
+  return { svg, R, resume: (R.alerte ? R.alerte + '   ·   ' : '') + info };
 }
 
 // Tableau des barres : une ligne par type, pour la note qui accompagne le schéma.

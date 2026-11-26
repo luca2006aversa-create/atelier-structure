@@ -42,6 +42,8 @@ const ECRAN = {
   // Plan
   murp: { f: '#cfcfcf' },
   cloison: { f: '#7d7d7d' },
+  poutrep: { s: '#fff', w: 1.25, d: [8, 5] },
+  'poutrep-axe': { s: '#8c8c8c', w: 0.8, d: [2, 4] },
   porte: { s: '#fff', w: 2.5 },
   'porte-arc': { s: '#8c8c8c', w: 1 },
   fenetre: { s: '#fff', w: 1.25 },
@@ -98,6 +100,8 @@ const PAPIER = {
   // Plan : murs en poché noir, cloisons en gris
   murp: { f: '#000' },
   cloison: { f: '#6e6e6e' },
+  poutrep: { s: '#000', w: 1, d: [8, 5] },
+  'poutrep-axe': { s: '#888', w: 0.6, d: [2, 4] },
   porte: { s: '#000', w: 2 },
   'porte-arc': { s: '#000', w: 0.8 },
   fenetre: { s: '#000', w: 1 },

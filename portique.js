@@ -56,7 +56,10 @@ function resoudre(A, b, n) {
 
 // ---------- Mise en équations ----------
 // Les nœuds au niveau du sol tiennent le bâtiment : articulation (le pied tourne librement).
+const APPUIS = new Set(['appui', 'encastrement', 'glissant']);
 function appuis(noeuds, y0) {
+  const choisis = noeuds.filter((n) => APPUIS.has(n.type));
+  if (choisis.length) return new Map(choisis.map((n) => [n.id, n.type]));
   const bas = noeuds.filter((n) => n.y - y0 < 0.02);
   if (bas.length >= 2) return new Map(bas.map((n) => [n.id, 'rotule']));
   const tri = noeuds.slice().sort((a, b) => a.y - b.y);
@@ -237,6 +240,65 @@ export function modele(f) {
   return { els, noeuds, appuis: appuis(noeuds.filter((n) => !n.cree), y0), y0, entraxe, forces, listeForces, lignes };
 }
 
+const nb2 = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
+
+// Rotules : quels bouts de barre ne transmettent pas le moment ? Clé 'idNœud|indexÉlément'.
+// À une rotule, on garde rigide la barre « passante » (deux barres alignées : poteau passant par défaut,
+// ou ce que dit la jonction du nœud) ; toutes les autres y sont articulées.
+function liberations(els, noeuds) {
+  const out = new Set();
+  for (const n of noeuds) {
+    if (n.type !== 'rotule') continue;
+    const ici = [];
+    els.forEach((el, i) => {
+      if (el.a !== n.id && el.c !== n.id) return;
+      const autre = el.a === n.id ? el.B : el.A;
+      const d = [autre[0] - n.x, autre[1] - n.y];
+      const L = Math.hypot(d[0], d[1]) || 1;
+      ici.push({ i, el, u: [d[0] / L, d[1] / L] });
+    });
+    if (ici.length < 2) continue;
+    // Meilleure paire alignée (sens opposés).
+    let garde = [ici[0]];
+    let meilleur = -Infinity;
+    for (let a = 0; a < ici.length; a++) for (let b = a + 1; b < ici.length; b++) {
+      const A = ici[a], B = ici[b];
+      const cos = A.u[0] * B.u[0] + A.u[1] * B.u[1];
+      if (cos > -0.98) continue;
+      const vertical = Math.abs(A.u[1]) > 0.7;
+      const voulu = n.jonction === 'horizontal' ? !vertical : n.jonction === 'vertical' ? vertical : vertical;
+      const score = (voulu ? 4 : 0) + (A.el.b.type === B.el.b.type ? 2 : 0) + (A.el.secondaire || B.el.secondaire ? -3 : 0);
+      if (score > meilleur) { meilleur = score; garde = [A, B]; }
+    }
+    const gardes = new Set(garde.map((g) => g.i));
+    for (const g of ici) if (!gardes.has(g.i)) out.add(n.id + '|' + g.i);
+  }
+  return out;
+}
+
+// Rotations propres des bouts articulés : celles qui annulent le moment à ce bout (repère local).
+function rotationsLibres(el, ul) {
+  const ur = ul.slice();
+  const L = el.lib || [];
+  if (!L.length) return ur;
+  const k = el.kl0;
+  const f = el.fl0;
+  const reste = (r) => f[r] - [0, 1, 2, 3, 4, 5].filter((c) => !L.includes(c)).reduce((s2, c) => s2 + k[r][c] * ul[c], 0);
+  if (L.length === 1) {
+    const r = L[0];
+    if (k[r][r] > 0) ur[r] = reste(r) / k[r][r];
+  } else {
+    const [a, b] = L;
+    const det = k[a][a] * k[b][b] - k[a][b] * k[b][a];
+    if (Math.abs(det) > 1e-12) {
+      const ra = reste(a), rb = reste(b);
+      ur[a] = (ra * k[b][b] - k[a][b] * rb) / det;
+      ur[b] = (k[a][a] * rb - k[b][a] * ra) / det;
+    }
+  }
+  return ur;
+}
+
 // ---------- Résolution ----------
 export function calculer(f) {
   const mo = modele(f);
@@ -248,10 +310,18 @@ export function calculer(f) {
   for (const [id, t] of AP) {
     const i = idx.get(id);
     if (i === undefined) continue;
-    bloque[i * 3] = 1;
+    if (t !== 'glissant') bloque[i * 3] = 1;
     bloque[i * 3 + 1] = 1;
     if (t === 'encastrement') bloque[i * 3 + 2] = 1;
   }
+  const nomsAP = [...AP.keys()].join(', ');
+  const nBloques = bloque.reduce((s2, v) => s2 + v, 0);
+  if (nBloques < 3 || ![...AP.values()].some((t) => t !== 'glissant')) {
+    const seul = AP.size === 1;
+    return { erreur: (seul ? '1 seul appui articulé (' + nomsAP + ')' : 'Pas assez d\'appuis (' + (nomsAP || 'aucun') + ')')
+      + ' : la structure peut tourner ou glisser. Mets un nœud du pied en « Encastré », ou ajoute un 2e « Appui ».' };
+  }
+  const rel = liberations(els, noeuds);
   // Numérotation des degrés de liberté restés libres.
   const num = new Int32Array(nd * 3).fill(-1);
   let n = 0;
@@ -295,6 +365,25 @@ export function calculer(f) {
         kg[r][c] = s;
       }
     }
+    // Rotule : le moment ne passe pas à ce bout de barre (condensation statique).
+    const lib = [rel.has(el.a + '|' + els.indexOf(el)) ? 2 : -1, rel.has(el.c + '|' + els.indexOf(el)) ? 5 : -1].filter((x) => x >= 0);
+    const kl0 = kl.map((r) => r.slice());
+    el.lib = lib;
+    el.kl0 = kl0;
+    for (const r of lib) {
+      const d = kl[r][r];
+      if (!(d > 0)) continue;
+      const col = kl.map((row) => row[r]);
+      const ligne = kl[r].slice();
+      for (let a2 = 0; a2 < 6; a2++) for (let c2 = 0; c2 < 6; c2++) kl[a2][c2] -= (col[a2] * ligne[c2]) / d;
+    }
+    if (lib.length) {
+      for (let r = 0; r < 6; r++) for (let c = 0; c < 6; c++) {
+        let s3 = 0;
+        for (let u = 0; u < 6; u++) for (let v = 0; v < 6; v++) s3 += T[u][r] * kl[u][v] * T[v][c];
+        kg[r][c] = s3;
+      }
+    }
     el.kl = kl;
     el.T = T;
     el.kg = kg;
@@ -302,6 +391,19 @@ export function calculer(f) {
     const wx = -el.q * sth;
     const wy = -el.q * cth;
     const fl = [(wx * L) / 2, (wy * L) / 2, (wy * L * L) / 12, (wx * L) / 2, (wy * L) / 2, (-wy * L * L) / 12];
+    el.fl0 = fl.slice();
+    {
+      const kk = kl0.map((r) => r.slice());
+      for (const r of lib) {
+        const d = kk[r][r];
+        if (!(d > 0)) continue;
+        const col = kk.map((row) => row[r]);
+        const fr = fl[r];
+        for (let a2 = 0; a2 < 6; a2++) fl[a2] -= (col[a2] * fr) / d;
+        const ligne = kk[r].slice();
+        for (let a2 = 0; a2 < 6; a2++) for (let c2 = 0; c2 < 6; c2++) kk[a2][c2] -= (col[a2] * ligne[c2]) / d;
+      }
+    }
     el.fl = fl;
     el.wy = wy;
     el.EI = EI;
@@ -327,7 +429,7 @@ export function calculer(f) {
     if (g >= 0) P[g] -= F.elu;
   }
   const U = resoudre(K, P, n);
-  if (!U) return { erreur: 'Structure instable (il manque un contreventement ou un appui).' };
+  if (!U) return { erreur: 'Structure instable : une partie peut bouger librement (appuis : ' + nomsAP + '). Ajoute une diagonale, un appui, ou passe une rotule en « Rigide ».' };
   const u = new Float64Array(nd * 3);
   for (let i = 0; i < nd * 3; i++) if (num[i] >= 0) u[i] = U[num[i]];
   // Efforts par élément : f = k·u − charges d'encastrement, exprimés dans le repère local.
@@ -346,7 +448,8 @@ export function calculer(f) {
     el.Mmi = (el.M[0] + el.M[1]) / 2 + (qm * el.L * el.L) / 8;
     el.Mabs = Math.max(Math.abs(el.M[0]), Math.abs(el.M[1]), Math.abs(el.Mmi));
     // Flèche à mi-portée, mesurée depuis la corde entre les deux bouts (poutre d'Euler-Bernoulli).
-    el.fleche = Math.abs((el.L * (ul[2] - ul[5])) / 8 + (el.wy * el.L ** 4) / (384 * el.EI));
+    const ur = rotationsLibres(el, ul);
+    el.fleche = Math.abs((el.L * (ur[2] - ur[5])) / 8 + (el.wy * el.L ** 4) / (384 * el.EI));
     Nmax = Math.max(Nmax, Math.abs(el.N));
     Mmax = Math.max(Mmax, el.Mabs);
     // Taux de travail (flexion composée simplifiée, Eurocode 5 pour le bois).
@@ -395,12 +498,15 @@ export function calculer(f) {
   // Garde-fou : un déplacement de plus d'un cinquième de la structure = mécanisme mal détecté.
   const xs = noeuds.map((q) => q.x), ys = noeuds.map((q) => q.y);
   const taille = Math.max(1, Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)));
-  if (!(dmax < taille * 0.2)) return { erreur: 'Structure instable ou bien trop souple (déplacement énorme) : ajoute un appui, un encastrement ou une diagonale.' };
+  if (!(dmax < taille * 5)) return { erreur: 'Structure instable (déplacement de ' + nb2(dmax) + ' m pour ' + nb2(taille) + ' m de structure) : ajoute un appui, un encastrement ou une diagonale.' };
+  const alerte = dmax > taille * 0.02
+    ? 'Bien trop souple : ça bouge de ' + nb2(dmax) + ' m. En vrai, ça casserait — encastre le pied, ajoute un appui ou une béquille, grossis les sections.'
+    : '';
   // Flèche en service (ELS) : le calcul est linéaire, on ramène la flèche ELU au rapport des charges totales.
   let qELU = els.reduce((s, e) => s + e.q * e.L, 0);
   let qELS = els.reduce((s, e) => s + e.qels * e.L, 0);
   for (const F of mo.forces.values()) { qELU += F.elu; qELS += F.els; }
   const rELS = qELU > 0 ? qELS / qELU : 1;
   for (const e of els) { e.flecheELU = e.fleche; e.fleche *= rELS; }
-  return { ...mo, els, depl, dmax, reactions, Nmax, Mmax, tauxMax: Math.max(0, ...els.map((e) => e.taux)) };
+  return { ...mo, els, depl, dmax, taille, alerte, reactions, Nmax, Mmax, tauxMax: Math.max(0, ...els.map((e) => e.taux)) };
 }

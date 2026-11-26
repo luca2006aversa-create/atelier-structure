@@ -8,11 +8,11 @@ export const TYPES_BARRE = [
   ['cable', 'Câble'], ['treillis', 'Treillis'], ['toit', 'Toit'], ['toile', 'Toile'], ['dalle', 'Dalle'],
   ['sol', 'Sol'], ['mur', 'Mur'],
   // Plan (vue de dessus)
-  ['murp', 'Mur'], ['cloison', 'Cloison'], ['porte', 'Porte'], ['fenetre', 'Fenêtre'],
+  ['murp', 'Mur'], ['cloison', 'Cloison'], ['poutrep', 'Poutre'], ['porte', 'Porte'], ['fenetre', 'Fenêtre'],
   ['escalier', 'Escalier'], ['trame', 'Trame'],
 ];
 export const NOM_BARRE = Object.fromEntries(TYPES_BARRE);
-export const BARRES_PLAN = new Set(['murp', 'cloison', 'porte', 'fenetre', 'escalier', 'trame']);
+export const BARRES_PLAN = new Set(['murp', 'cloison', 'poutrep', 'porte', 'fenetre', 'escalier', 'trame']);
 export const TYPES_NOEUD = [
   ['libre', 'Libre'], ['rotule', 'Rotule'], ['rigide', 'Rigide'],
   ['appui', 'Appui'], ['encastrement', 'Encastré'], ['glissant', 'Glissant'], ['poteau', 'Poteau'],
@@ -551,6 +551,13 @@ export function primitivesBarre(b, A, B, K, out, x = null) {
     out.push({ k: 'p', st: b.type, id, p: x?.coins || bande(A, B, u, epaisseur(b)), ferme: true });
     return;
   }
+  // Poutre vue en plan : elle passe au-dessus du plan de coupe, donc en tirets (largeur réelle).
+  if (b.type === 'poutrep') {
+    const S = sectionDe(b);
+    out.push({ k: 'p', st: 'poutrep', id, p: bande(A, B, u, Math.max(0.02, S.b || 0.12)), ferme: true });
+    out.push({ k: 'l', st: 'poutrep-axe', id, p: [A, B] });
+    return;
+  }
   if (b.type === 'porte') {
     const L = dist(A, B);
     const o = b.porte || {};
@@ -758,7 +765,7 @@ export function primitivesCote(c, A, B, K, out) {
 
 // ---------- Toute une feuille ----------
 const ORDRE = {
-  trame: -2, escalier: -1, sol: 0, mur: 0, cloison: 0.3, murp: 0.4, dalle: 1, toile: 2, cable: 3,
+  trame: -2, escalier: -1, sol: 0, mur: 0, cloison: 0.3, murp: 0.4, poutrep: 0.9, dalle: 1, toile: 2, cable: 3,
   entretoise: 4, treillis: 5, toit: 5.5, poutre: 6, bequille: 6, poteau: 7, fenetre: 8, porte: 8,
 };
 
@@ -772,7 +779,23 @@ export function portiquesZ(f) {
 
 // Reflet de la coupe liée, vu de dessus : x de la coupe = x du plan, profondeur z = y du plan.
 // Poteaux à leur vraie section, poutres en bandes, pannes en tirets. Pas d'id : on ne les sélectionne pas.
-export function refletCoupe(c, out) {
+// Place d'une coupe vue de dessus : son x et sa profondeur z deviennent un point (x, y) du plan.
+// Angle 0 : la coupe suit l'axe x du plan. Angle 90 : elle suit l'axe y.
+export function placeCoupe(c) {
+  const t = c?.trois_d || {};
+  const x0 = +t.x0 || 0;
+  const y0 = +t.y0 || 0;
+  return +t.angle === 90 ? (x, z) => [x0 - z, y0 + x] : (x, z) => [x0 + x, y0 + z];
+}
+
+export function refletCoupe(c, out0) {
+  const place = placeCoupe(c);
+  const out = [];
+  refletBrut(c, out);
+  for (const pr of out) { pr.p = pr.p.map((q) => place(q[0], q[1])); out0.push(pr); }
+}
+
+function refletBrut(c, out) {
   const N = carteNoeuds(c);
   const zs = portiquesZ(c);
   const z0 = zs[0] - (zs.length > 1 ? 0 : 3);

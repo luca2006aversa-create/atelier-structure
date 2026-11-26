@@ -67,6 +67,8 @@ const T = {
   charge: P('M12 3v10|M8 9.5l4 4 4-4|M3 18h18|M6 18v3M18 18v3'),
   etage: P('M3 9h18M3 15h18|M6 9v6M18 9v6|M6 15v5M18 15v5|M12 2v4|M10.2 4.6L12 6l1.8-1.4'),
   objet: R(7, 3, 10, 8, 1) + P('M12 11v6|M9 14.5l3 3 3-3|M3 21h18'),
+  poutrep: P('M3 9h3M9 9h3M15 9h3M21 9h0|M3 15h3M9 15h3M15 15h3|M3 12h18'),
+  ensemble: P('M12 3l9 5-9 5-9-5z|M3 12.5l9 5 9-5|M3 16.5l9 5 9-5'),
   // Types de feuille
   'f-coupe': P('M2 20h20|M5 20V10l7-6 7 6v10|M5 13h14'),
   'f-plan': R(3, 4, 18, 16, 0.5) + P('M12 4v6M12 14v6|M12 10a4 4 0 0 1 4 4'),
