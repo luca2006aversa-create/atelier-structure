@@ -24,6 +24,8 @@ export const NON_COUPEES = new Set(['treillis', 'toit', 'toile', 'porte', 'fenet
 
 // Feuille en plan (vue de dessus). Sans type : une coupe.
 export const estPlan = (f) => f?.type === 'plan';
+// Barres à leur vraie épaisseur : oui, sauf si la feuille l'a éteint.
+export const sectionsVisibles = (f) => f?.sections !== false;
 export const MURS = new Set(['murp', 'cloison']);
 export const OUVERTURES = new Set(['porte', 'fenetre']);
 export const EP_MUR = { murp: 0.2, cloison: 0.1 };
@@ -232,12 +234,149 @@ export const BARRES_LIN = new Set(['poteau', 'poutre', 'bequille', 'entretoise',
 export const hauteurVue = (b) => sectionDe(b).h;
 
 // Un élément linéaire : simple trait, ou bande à sa vraie largeur si K.sections est actif.
-function lin(out, st, id, A, B, K, e) {
+function lin(out, st, id, A, B, K, e, sec = null) {
   if (K.sections && e > 0.004) {
-    out.push({ k: 'p', st: st + '-vol', id, p: bande(A, B, unite(sub(B, A)), e), ferme: true });
+    // ax et h servent aux jonctions (raccorderBandes) ; sec aux détails (ailes, parois).
+    out.push({ k: 'p', st: st + '-vol', id, p: bande(A, B, unite(sub(B, A)), e), ferme: true, ax: [A, B], h: e / 2, sec });
     return;
   }
   out.push({ k: 'l', st, id, p: [A, B] });
+}
+
+// ---------- Jonctions des barres à leur vraie largeur ----------
+// Qui passe devant qui quand deux barres se touchent : la plus forte reste entière,
+// l'autre s'arrête contre sa face. Deux barres de même rang se coupent en onglet.
+const RANG = { 'poteau-vol': 9, 'poutre-vol': 8, 'membrure-vol': 7, 'bequille-vol': 6, 'entretoise-vol': 5, 'diagonale-vol': 4, 'cable-vol': 3 };
+const croix2 = (a, b) => a[0] * b[1] - a[1] * b[0];
+// Paramètre t sur la droite P + t·v là où elle coupe la droite Q + s·w.
+const inter = (P, v, Q, w) => { const c = croix2(v, w); return Math.abs(c) < 1e-9 ? null : croix2(sub(Q, P), w) / c; };
+
+// Calcule les nouveaux bouts de chaque bande ; modifie p et ax en place.
+export function raccorderBandes(prims) {
+  const B = prims.filter((p) => p.ax && RANG[p.st]);
+  if (B.length < 2) return prims;
+  const tol = 1e-3;
+  for (const b of B) { b._u = unite(sub(b.ax[1], b.ax[0])); b._L = dist(b.ax[0], b.ax[1]); }
+  const coupes = new Map();
+  for (const b of B) {
+    const bouts = [];
+    for (const k of [0, 1]) {
+      const E = b.ax[k];
+      const v = k === 0 ? b._u : mul(b._u, -1); // du bout vers l'intérieur de la barre
+      const n = normale(v);
+      const h = b.h;
+      const lim = 6 * h + 0.05;
+      const auBout = [];
+      const traverse = [];
+      for (const o of B) {
+        if (o === b || o._L < 1e-6) continue;
+        if (distSeg(E, o.ax[0], o.ax[1]).d > tol) continue;
+        const bout = dist(E, o.ax[0]) < tol || dist(E, o.ax[1]) < tol;
+        const vo = dist(E, o.ax[0]) < tol ? o._u : dist(E, o.ax[1]) < tol ? mul(o._u, -1) : o._u;
+        const s = croix2(v, vo);
+        (bout ? auBout : traverse).push({ o, vo, s, c: v[0] * vo[0] + v[1] * vo[1] });
+      }
+      let tg = 0;
+      let td = 0;
+      let fait = false;
+      // 1. Contre une barre plus forte, ou une barre qu'on touche en son milieu : on s'arrête à sa face.
+      const fortes = [...traverse, ...auBout.filter((x) => RANG[x.o.st] > RANG[b.st])].filter((x) => Math.abs(x.s) > 0.05);
+      for (const { o } of fortes) {
+        const no = normale(o._u);
+        const cote = Math.sign(croix2(o._u, sub(b.ax[1 - k], o.ax[0]))) || 1; // face tournée vers nous
+        const F = add(o.ax[0], mul(no, cote * o.h));
+        const g = inter(add(E, mul(n, h)), v, F, o._u);
+        const d = inter(sub(E, mul(n, h)), v, F, o._u);
+        if (g === null || d === null || g < -lim || d < -lim || g > b._L * 0.45 || d > b._L * 0.45) continue;
+        // La face ne compte que là où la barre existe vraiment (pas sur son prolongement).
+        const dedans = (P) => { const s = (P[0] - o.ax[0][0]) * o._u[0] + (P[1] - o.ax[0][1]) * o._u[1]; return s > -(o.h + h) && s < o._L + o.h + h; };
+        if (!dedans(add(add(E, mul(n, h)), mul(v, g))) || !dedans(sub(add(E, mul(v, d)), mul(n, h)))) continue;
+        if (!fait) { tg = g; td = d; fait = true; } else { tg = Math.max(tg, g); td = Math.max(td, d); }
+      }
+      if (!fait) {
+        const egales = auBout.filter((x) => RANG[x.o.st] === RANG[b.st]);
+        // Une barre aussi forte continue dans le prolongement (poteau d'étage…) : on ne dépasse pas.
+        const suite = auBout.some((x) => Math.abs(x.s) < 0.05 && x.c < 0 && RANG[x.o.st] >= RANG[b.st]);
+        const angle = egales.filter((x) => Math.abs(x.s) > 0.05);
+        if (egales.length === 1 && angle.length === 1) {
+          // 2. Onglet : le bord gauche de l'une rencontre le bord droit de l'autre.
+          const { o, vo, s } = angle[0];
+          const n2 = normale(vo);
+          const g = croix2(sub(mul(n2, -o.h), mul(n, h)), vo) / s;
+          const d = croix2(sub(mul(n2, o.h), mul(n, -h)), vo) / s;
+          if (Math.abs(g) < lim && Math.abs(d) < lim) { tg = g; td = d; }
+        } else if (!suite) {
+          // 3. On est la barre forte du nœud : on dépasse juste assez pour couvrir le bout des autres.
+          let t = 0;
+          for (const { o, vo, s } of auBout) {
+            if (RANG[o.st] >= RANG[b.st] || Math.abs(s) < 0.05) continue;
+            // Les bords de l'autre barre rencontrent nos faces : on monte jusqu'au plus haut de ces coins.
+            const no = normale(vo);
+            for (const s1 of [1, -1]) for (const s2 of [1, -1]) {
+              const P = add(E, mul(n, s1 * h));
+              const Q = add(E, mul(no, s2 * o.h));
+              const ti = inter(P, v, Q, vo);
+              const si = inter(Q, vo, P, v);
+              if (ti !== null && si !== null && si > -o.h) t = Math.min(t, ti);
+            }
+          }
+          tg = td = Math.max(t, -lim);
+        }
+      }
+      bouts.push({ E, v, n, tg, td });
+    }
+    coupes.set(b, bouts);
+  }
+  for (const [b, [a, z]] of coupes) {
+    const aG = add(add(a.E, mul(a.v, a.tg)), mul(a.n, b.h));
+    const aD = sub(add(a.E, mul(a.v, a.td)), mul(a.n, b.h));
+    const zG = add(add(z.E, mul(z.v, z.tg)), mul(z.n, b.h));
+    const zD = sub(add(z.E, mul(z.v, z.td)), mul(z.n, b.h));
+    b.p = [aG, zD, zG, aD]; // même ordre que bande() : [A+n, B+n, B-n, A-n]
+    b.ax = [lerp(aG, aD, 0.5), lerp(zG, zD, 0.5)];
+    delete b._u; delete b._L;
+  }
+  return prims;
+}
+
+// Détails dans l'épaisseur : ailes d'un profilé, parois d'un tube, axe de la barre.
+export function detailsBandes(prims) {
+  const out = [];
+  for (const b of prims) {
+    if (!b.ax || !RANG[b.st]) continue;
+    const [aG, zD, zG, aD] = b.p;
+    const ligne = (st, r) => out.push({ k: 'l', st, id: b.id, p: [lerp(aG, aD, r), lerp(zD, zG, r)] });
+    const e = 2 * b.h;
+    const S = b.sec;
+    if (S?.f === 'profil') {
+      const r = Math.min(0.2, (0.045 * S.h) / e); // épaisseur d'aile ~ 4,5 % de la hauteur
+      ligne('detail', r);
+      ligne('detail', 1 - r);
+    } else if (S?.f === 'tube') {
+      const r = Math.min(0.3, (S.e || e / 12) / e);
+      ligne('detail-cache', r);
+      ligne('detail-cache', 1 - r);
+    }
+    if (e > 0.05 && b.st !== 'diagonale-vol' && b.st !== 'cable-vol') ligne('axe', 0.5);
+  }
+  return out;
+}
+
+// Toutes les barres d'une coupe à leur vraie largeur, jonctions faites : [{ b, prims }].
+export function barresEnSections(f, K, N = carteNoeuds(f)) {
+  const liste = [];
+  const tout = [];
+  for (const b of f.barres) {
+    const na = N.get(b.a);
+    const nb = N.get(b.b);
+    if (!na || !nb) continue;
+    const prims = [];
+    primitivesBarre(b, [na.x, na.y], [nb.x, nb.y], { ...K, sections: true }, prims);
+    liste.push({ b, prims });
+    tout.push(...prims);
+  }
+  raccorderBandes(tout);
+  return liste;
 }
 
 // ---------- Formes d'une barre ----------
@@ -313,8 +452,8 @@ export function primitivesBarre(b, A, B, K, out, x = null) {
     const em = hauteurVue(b);
     const L = (p, q) => lin(out, 'diagonale', id, p, q, K, em * 0.6);
     out.push({ k: 'p', st: 'zone', id, p: [A, B, B2, A2], ferme: true });
-    lin(out, 'membrure', id, A, B, K, em);
-    lin(out, 'membrure', id, A2, B2, K, em);
+    lin(out, 'membrure', id, A, B, K, em, sectionDe(b));
+    lin(out, 'membrure', id, A2, B2, K, em, sectionDe(b));
     const forme = t.forme || 'warren';
     if (forme === 'warren' || forme === 'warren_m') {
       for (let i = 0; i < n; i++) { if (i % 2 === 0) L(P(i), Q(i + 1)); else L(Q(i), P(i + 1)); }
@@ -381,7 +520,7 @@ export function primitivesBarre(b, A, B, K, out, x = null) {
     hachures(A, B, mul(bas, b.sol?.sens === -1 ? -1 : 1), K.su, out, id);
     return;
   }
-  if (BARRES_LIN.has(b.type)) { lin(out, b.type, id, A, B, K, hauteurVue(b)); return; }
+  if (BARRES_LIN.has(b.type)) { lin(out, b.type, id, A, B, K, hauteurVue(b), sectionDe(b)); return; }
   out.push({ k: 'l', st: b.type, id, p: [A, B] });
 }
 
@@ -462,10 +601,52 @@ const ORDRE = {
   entretoise: 4, treillis: 5, toit: 5.5, poutre: 6, bequille: 6, poteau: 7, fenetre: 8, porte: 8,
 };
 
-export function primitivesFeuille(f, K0, ecran) {
+// Portiques répartis le long de la profondeur (même règle que la 3D et les exports).
+export function portiquesZ(f) {
+  const t = f.trois_d || {};
+  const e = Math.max(0.5, +t.entraxe || 6);
+  const nb = borne(Math.round(+t.nombre || 4), 1, 40);
+  return Array.from({ length: nb }, (_, i) => (i - (nb - 1) / 2) * e);
+}
+
+// Reflet de la coupe liée, vu de dessus : x de la coupe = x du plan, profondeur z = y du plan.
+// Poteaux à leur vraie section, poutres en bandes, pannes en tirets. Pas d'id : on ne les sélectionne pas.
+export function refletCoupe(c, out) {
+  const N = carteNoeuds(c);
+  const zs = portiquesZ(c);
+  const z0 = zs[0] - (zs.length > 1 ? 0 : 3);
+  const z1 = zs[zs.length - 1] + (zs.length > 1 ? 0 : 3);
+  const xs = new Set();
+  for (const b of c.barres || []) {
+    if (b.type === 'sol' || b.type === 'mur') continue;
+    const A = N.get(b.a);
+    const B = N.get(b.b);
+    if (!A || !B) continue;
+    const S = sectionDe(b);
+    const lb = Math.max(0.03, S.b || 0.1) / 2;
+    const vertical = Math.abs(A.x - B.x) < 0.05;
+    for (const z of zs) {
+      if (vertical) {
+        const lh = Math.max(0.03, S.h || 0.1) / 2;
+        const x = A.x;
+        out.push({ k: 'p', st: 'reflet-poteau', id: null, ferme: true, p: [[x - lh, z - lb], [x + lh, z - lb], [x + lh, z + lb], [x - lh, z + lb]] });
+      } else {
+        const xa = Math.min(A.x, B.x);
+        const xb = Math.max(A.x, B.x);
+        out.push({ k: 'p', st: 'reflet', id: null, ferme: true, p: [[xa, z - lb], [xb, z - lb], [xb, z + lb], [xa, z + lb]] });
+      }
+    }
+    for (const n of [A, B]) if (n.y > 0.01) xs.add(Math.round(n.x * 1000) / 1000);
+  }
+  if (zs.length > 1) for (const x of xs) out.push({ k: 'l', st: 'reflet', id: null, p: [[x, z0], [x, z1]] });
+}
+
+export function primitivesFeuille(f, K0, ecran, reflet = null) {
   const out = [];
+  if (reflet && estPlan(f)) refletCoupe(reflet, out);
   // Mode « sections » : les barres sont dessinées à leur vraie largeur.
-  const K = f.sections && !estPlan(f) ? { ...K0, sections: true } : K0;
+  // Allumé par défaut : on ne l'éteint que si la feuille dit sections: false.
+  const K = sectionsVisibles(f) && !estPlan(f) ? { ...K0, sections: true } : K0;
   const N = carteNoeuds(f);
   const J = f.barres.some((b) => MURS.has(b.type)) ? analysePlan(f, N) : null;
   const barres = f.barres.slice().sort((a, b) => (ORDRE[a.type] ?? 5) - (ORDRE[b.type] ?? 5));
@@ -481,6 +662,13 @@ export function primitivesFeuille(f, K0, ecran) {
       x = { coins: bandeMur(b, A, B, J, N) };
     } else if (J && OUVERTURES.has(b.type)) x = { e: J.ep.get(b.id) };
     primitivesBarre(b, A, B, K, out, x);
+  }
+  if (K.sections) {
+    raccorderBandes(out);
+    // Les détails juste après leur barre : une barre de devant les cache bien.
+    const tri = [];
+    for (const pr of out) { tri.push(pr); if (pr.ax) tri.push(...detailsBandes([pr])); }
+    out.splice(0, out.length, ...tri);
   }
   for (const s of f.traits || []) if (s.pts.length > 1) out.push({ k: 'p', st: 'trait', id: s.id, p: s.pts, ferme: false });
   for (const nd of f.noeuds) primitivesNoeud(nd, K, out, ecran);

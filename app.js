@@ -1,8 +1,9 @@
 // Atelier structure : démarrage, liens entre les modules, boutons du haut et de la 3D.
 import {
   etat, feuille, crochets, rafraichir, initHistorique, modifie, peutAnnuler, peutRetablir,
-  annuler, retablir, appliquerVue, allerFeuille, toast, uid, memoriserVue,
+  annuler, retablir, appliquerVue, allerFeuille, toast, uid, memoriserVue, paireDe,
 } from './etat.js';
+import { estPlan } from './geometrie.js';
 import { initScene, demanderDessin, zoomerCentre, cadrerVue } from './scene.js';
 import { initOutils, finirAction, majModeOutils } from './outils.js';
 import { initPanneau, dessinerPanneau } from './panneau.js';
@@ -100,6 +101,34 @@ function nouvelleVersion() {
   allerId(n.id);
   modifie();
   toast('Version V' + n.v + ' créée (copie de V' + (f.v || 1) + ')');
+}
+
+// Coupe ↔ plan : deux vues séparées d'un même bâtiment. On saute vers la feuille liée,
+// ou on la crée (vide, liée des deux côtés). Une feuille encore vide change juste de type.
+function basculerVue(plan) {
+  const f = feuille();
+  if (!f || estPlan(f) === plan) return;
+  etat.sel.clear();
+  const p = paireDe(f);
+  if (p && estPlan(p) === plan) { memoriserVue(); allerId(p.id); return; }
+  if (!f.noeuds.length && !f.barres.length && !p) {
+    f.type = plan ? 'plan' : 'coupe';
+    if (plan && !(f.etage > 0)) f.etage = 2.7;
+    modifie();
+    toast(plan ? 'Feuille en plan : vue de dessus' : 'Feuille en coupe');
+    return;
+  }
+  memoriserVue();
+  const base = f.nom.replace(/\s*·\s*(plan|coupe)$/i, '');
+  const n = feuilleVide(base + (plan ? ' · plan' : ' · coupe'), (f.ordre ?? 0) + 0.5, plan ? 'plan' : 'coupe');
+  n.paire = f.id;
+  f.paire = n.id;
+  n.trois_d = { ...(f.trois_d || {}) }; // même entraxe : le plan et la coupe parlent des mêmes portiques
+  etat.doc.feuilles.push(n);
+  trier(etat.doc.feuilles);
+  allerId(n.id);
+  modifie();
+  toast(plan ? 'Plan créé, lié à la coupe : sa structure s’affiche en gris' : 'Coupe créée, liée au plan');
 }
 
 function brancherOnglets() {
@@ -629,6 +658,7 @@ async function demarrer() {
     vue3d: () => { maj3D(); majSchema(); majBilan(); },
     onglets,
     finirAction,
+    basculerVue,
   });
   brancherFinir(finirAction);
   brancherOnglets();

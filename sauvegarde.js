@@ -1,5 +1,5 @@
 // Sauvegarde : dans le dossier du projet (serveur) + copie dans le navigateur. Chargement et réparation.
-import { etat, uid, memoriserVue, toast, feuille, adopterDistant, appliquerVue, rafraichir } from './etat.js';
+import { etat, uid, memoriserVue, toast, feuille, adopterDistant, appliquerVue, rafraichir, paireDe } from './etat.js';
 import { TYPES_BARRE, TYPES_NOEUD, FORMES_TREILLIS } from './geometrie.js';
 import { svgPapier } from './rendu.js';
 import { ico } from './pictos.js';
@@ -70,7 +70,7 @@ async function envoyer(v) {
   }
   const svgs = {};
   etat.doc.feuilles.forEach((f, i) => {
-    try { svgs[nomFichier(f, i)] = svgPapier(f); } catch (e) { console.error('Planche', f.nom, e); }
+    try { svgs[nomFichier(f, i)] = svgPapier(f, paireDe(f)); } catch (e) { console.error('Planche', f.nom, e); }
   });
   etatSauvegarde('attente', 'Enregistrement…');
   try {
@@ -259,7 +259,13 @@ function reparer(doc) {
 // ---------- Document de départ : ma lecture des croquis, à corriger ----------
 function docDepart() {
   // Autre projet que le gymnase : un plan et une coupe vides, à dessiner.
-  if (projet) return { feuilles: [feuilleVide('Plan', 0, 'plan'), feuilleVide('Coupe', 1)] };
+  if (projet) {
+    const plan = feuilleVide('Plan', 0, 'plan');
+    const coupe = feuilleVide('Coupe', 1);
+    plan.paire = coupe.id; // liées : le bouton Coupe / Plan passe de l'une à l'autre
+    coupe.paire = plan.id;
+    return { feuilles: [plan, coupe] };
+  }
   const f = feuilleVide('Lecture Claude');
   const N = (id, x, y, type = 'libre') => ({ id, x, y, type });
   f.noeuds = [

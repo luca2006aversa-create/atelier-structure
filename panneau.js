@@ -1,6 +1,6 @@
 // Panneau de droite : réglages précis de ce qui est choisi.
 // Rien de choisi : l'outil en cours, la feuille, le croquis de fond et les gestes.
-import { etat, feuille, modifie, rafraichir, toast, crochets, appliquerVue } from './etat.js';
+import { etat, feuille, modifie, rafraichir, toast, crochets, appliquerVue, paireDe } from './etat.js';
 import { TYPES_BARRE, FORMES_TREILLIS, FORMES_TOIT, NOM_BARRE, NOM_NOEUD, BARRES_PLAN, carteNoeuds, pointCote, estPlan } from './geometrie.js';
 import { supprimerSelection, retourner, copier, symetrie, reglagesBarre } from './commandes.js';
 import { apresDeplacement, synchroCotes, couperParNoeuds } from './topologie.js';
@@ -440,7 +440,7 @@ function blocFeuille(f) {
     + champTexte('Nom', 'f.nom', f.nom)
     + `<div class="ligne-champ"><span>Type</span><div class="a-bascule bascule-pleine">${types}</div></div>`
     + (plan ? champ('Hauteur des murs', 'f.etage', nb(f.etage ?? 2.7), { unite: 'm', pas: 0.1 })
-      : interrupteur('f.sections', 'section', 'Barres à leur vraie largeur', f.sections))
+      : interrupteur('f.sections', 'section', 'Barres à leur vraie épaisseur', f.sections !== false))
     + discret(`${f.barres.length} ${plan ? 'éléments' : 'barres'} · ${f.noeuds.length} nœuds · ${f.cotes.length} cotes · ${f.textes.length} textes`)
     + rangee(
       enLigne ? bouton('feuille-svg', 'oeil', 'Télécharger le SVG')
@@ -848,11 +848,7 @@ async function agir(act, v, el) {
       const plan = v === 'plan';
       if (estPlan(f) === plan) return;
       crochets.finirAction?.();
-      f.type = plan ? 'plan' : 'coupe';
-      if (plan && !(f.etage > 0)) f.etage = 2.7;
-      etat.sel.clear();
-      modifie();
-      toast(plan ? 'Feuille en plan : vue de dessus, outils du plan' : 'Feuille en coupe : outils de la coupe');
+      crochets.basculerVue(plan);
       return;
     }
     case 'forme': {
@@ -941,7 +937,7 @@ async function agir(act, v, el) {
     case 'croquis':
       if (f.croquis?.nom !== v) await choisirFond(v); // même image : on garde l'étalonnage
       return;
-    case 'feuille-svg': telecharger(nomFichier(f, etat.fi), svgPapier(f)); return;
+    case 'feuille-svg': telecharger(nomFichier(f, etat.fi), svgPapier(f, paireDe(f))); return;
     case 'croquis-ajouter': document.getElementById('fichier-image')?.click(); return;
     case 'croquis-tourner':
       if (f.croquis) { f.croquis.rot = angle180((+f.croquis.rot || 0) + (+v || 0)); modifie(); }

@@ -60,6 +60,11 @@ const ECRAN = {
   'membrure-vol': { s: '#fff', w: 1, f: '#4a4a4a' },
   'diagonale-vol': { s: '#fff', w: 1, f: '#3c3c3c' },
   'toit-vol': { s: '#fff', w: 1, f: '#4a4a4a' },
+  detail: { s: '#bdbdbd', w: 0.7 },
+  'detail-cache': { s: '#8c8c8c', w: 0.7, d: [4, 3] },
+  axe: { s: '#6e6e6e', w: 0.6, d: [12, 3, 2, 3] },
+  reflet: { s: '#5a5a5a', w: 0.8, f: 'rgba(255,255,255,.07)', d: [5, 3] },
+  'reflet-poteau': { s: '#8c8c8c', w: 0.8, f: '#3a3a3a' },
 };
 
 const PAPIER = {
@@ -109,6 +114,11 @@ const PAPIER = {
   'membrure-vol': { s: '#000', w: 0.8, f: '#d4d4d4' },
   'diagonale-vol': { s: '#000', w: 0.8, f: '#e2e2e2' },
   'toit-vol': { s: '#000', w: 0.8, f: '#d4d4d4' },
+  detail: { s: '#000', w: 0.5 },
+  'detail-cache': { s: '#555', w: 0.5, d: [4, 3] },
+  axe: { s: '#777', w: 0.4, d: [12, 3, 2, 3] },
+  reflet: { s: '#999', w: 0.5, f: 'rgba(0,0,0,.04)', d: [5, 3] },
+  'reflet-poteau': { s: '#000', w: 0.6, f: '#bbb' },
 };
 
 export const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -166,16 +176,16 @@ export function transformEcran(vue, W, H) {
 export function svgEcran(prims, vue, W, H, sel, survol) {
   const T = transformEcran(vue, W, H);
   let s = '';
-  for (const pr of prims) s += forme(pr, ECRAN[pr.st], sel.has(pr.id) ? 2 : pr.id === survol ? 1 : 0, T);
+  for (const pr of prims) s += forme(pr, ECRAN[pr.st], sel.has(pr.id) ? 2 : pr.id != null && pr.id === survol ? 1 : 0, T);
   return s;
 }
 
 // Planche SVG d'une feuille : fond blanc, unités en mètres, y vers le haut (svgY = -y).
-export function svgPapier(f) {
+export function svgPapier(f, reflet = null) {
   const b0 = boite(f) || { x0: -5, y0: 0, x1: 5, y1: 5 };
   const taille = Math.max(b0.x1 - b0.x0, b0.y1 - b0.y0, 2);
   const su = borne(taille / 45, 0.02, 3);
-  const prims = primitivesFeuille(f, echelle(18 / su), false);
+  const prims = primitivesFeuille(f, echelle(18 / su), false, reflet);
   if (!estPlan(f) && !f.barres.some((b) => b.type === 'sol') && f.noeuds.some((n) => Math.abs(n.y) < 1e-3)) {
     prims.unshift({ k: 'l', st: 'sol', id: 'sol0', p: [[b0.x0 - 2 * su, 0], [b0.x1 + 2 * su, 0]] });
   }

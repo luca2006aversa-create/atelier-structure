@@ -1,5 +1,5 @@
 // État partagé de l'atelier : document, vue, outil, sélection, historique (annuler / rétablir).
-import { boite, borne } from './geometrie.js';
+import { boite, borne, boitePrims, refletCoupe, estPlan } from './geometrie.js';
 import { canon, copie, fusion, sansVue, trier } from './fusion.js';
 
 export const etat = {
@@ -70,7 +70,7 @@ export function toast(msg, alerte = false) {
 
 // Crochets : remplis par les autres modules (évite les imports en boucle).
 export const crochets = {
-  dessiner() {}, panneau() {}, boutons() {}, sauver() {}, vue3d() {}, onglets() {}, finirAction() {},
+  dessiner() {}, panneau() {}, boutons() {}, sauver() {}, vue3d() {}, onglets() {}, finirAction() {}, basculerVue() {},
 };
 
 function nettoyerSelection() {
@@ -201,6 +201,8 @@ export function cadrer(f = feuille()) {
     const k = boiteCroquis(f.croquis);
     b = b ? { x0: Math.min(b.x0, k.x0), y0: Math.min(b.y0, k.y0), x1: Math.max(b.x1, k.x1), y1: Math.max(b.y1, k.y1) } : k;
   }
+  // Plan encore vide, lié à une coupe : on cadre sur le reflet de sa structure.
+  if (!b && estPlan(f) && paireDe(f)) { const r = []; refletCoupe(paireDe(f), r); b = boitePrims(r); }
   if (!b) {
     etat.vue = { cx: 0, cy: 6, z: borne(Math.min(etat.W, etat.H) / 24, 2, 3000) };
     return;
@@ -226,4 +228,10 @@ export function allerFeuille(i) {
   etat.survol = null;
   appliquerVue();
   rafraichir();
+}
+
+// Feuille liée : la coupe d'un plan, le plan d'une coupe (champ « paire », posé des deux côtés).
+export function paireDe(f) {
+  if (!f || !etat.doc) return null;
+  return etat.doc.feuilles.find((x) => x !== f && (x.id === f.paire || x.paire === f.id)) || null;
 }

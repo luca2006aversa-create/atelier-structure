@@ -1,7 +1,7 @@
 // Passerelle vers Rhino et Grasshopper.
 // On n'exporte pas des faces mais la structure elle-même : un axe, une section, une matière
 // par barre. Rhino rebâtit les volumes ; Grasshopper peut repartir des axes et tout refaire.
-import { primitivesBarre, carteNoeuds, borne } from './geometrie.js';
+import { barresEnSections, carteNoeuds, borne } from './geometrie.js';
 import { sectionDe, matiereDe, cleMatiere, MATIERES } from './matieres.js';
 
 export const VERSION = 1;
@@ -45,19 +45,17 @@ export function versRhino(f) {
   const porteurs = new Set();
   const utilisees = new Set();
 
-  for (const b of f.barres || []) {
-    const A = N.get(b.a);
-    const B = N.get(b.b);
-    if (!A || !B) continue;
+  // Jonctions faites (onglets, arrêts contre les faces) : Rhino reçoit les longueurs réelles.
+  for (const { b, prims: out } of barresEnSections({ ...f, barres: f.barres || [] }, K, N)) {
     if (b.type !== 'sol' && b.type !== 'mur') { porteurs.add(b.a); porteurs.add(b.b); }
     const S = sectionDe(b);
     const mat = cleMatiere(b);
-    const out = [];
-    primitivesBarre(b, [A.x, A.y], [B.x, B.y], K, out);
     for (const pr of out) {
       if (pr.st === 'zone' || pr.st === 'hachure') continue;
       if (VOL.has(pr.st) && pr.p.length === 4) {
-        const { a, c, h } = axeBande(pr.p);
+        const ab = axeBande(pr.p);
+        const h = pr.h ? 2 * pr.h : ab.h;
+        const [a, c] = pr.ax || [ab.a, ab.c];
         const k = pr.st === 'diagonale-vol' ? 0.6 : 1;
         utilisees.add(mat);
         barres.push({

@@ -4,7 +4,7 @@
 // Le DXF 2D reprend le dessin de la feuille, barres à leur vraie largeur.
 // Repère des fichiers : mètres, Z vers le haut. Coupe : x = largeur, y = profondeur, z = hauteur. Plan : x, y du plan, z = hauteur.
 import {
-  primitivesBarre, primitivesFeuille, carteNoeuds, borne, boite, estPlan, analysePlan, bandeMur, epaisseur, MURS,
+  primitivesBarre, barresEnSections, primitivesFeuille, carteNoeuds, borne, boite, estPlan, analysePlan, bandeMur, epaisseur, MURS,
   H_PORTE, H_ALLEGE, H_LINTEAU, sub, add, mul, unite, normale, dist,
 } from './geometrie.js';
 import { sectionDe, matiereDe, cleMatiere, MATIERES } from './matieres.js';
@@ -69,21 +69,17 @@ function prismesCoupe(f) {
   const out = [];
   const porteurs = new Set();
   const pousser = (s) => s && out.push(s);
-  for (const b of f.barres) {
-    const A = N.get(b.a);
-    const B = N.get(b.b);
-    if (!A || !B) continue;
+  // Jonctions faites une fois pour toute la feuille : mêmes coupes qu'à l'écran.
+  for (const { b, prims } of barresEnSections(f, K, N)) {
     if (b.type !== 'sol' && b.type !== 'mur') { porteurs.add(b.a); porteurs.add(b.b); }
     const S = sectionDe(b);
     const mat = cleMatiere(b);
-    const prims = [];
-    primitivesBarre(b, [A.x, A.y], [B.x, B.y], K, prims);
     for (const pr of prims) {
       if (VOL.has(pr.st) && pr.p.length === 4) {
         const piece = pr.st.replace('-vol', '');
         const d = Math.max(0.004, S.b * (pr.st === 'diagonale-vol' ? 0.6 : 1));
-        const P = [(pr.p[0][0] + pr.p[3][0]) / 2, (pr.p[0][1] + pr.p[3][1]) / 2];
-        const Q = [(pr.p[1][0] + pr.p[2][0]) / 2, (pr.p[1][1] + pr.p[2][1]) / 2];
+        const P = pr.ax ? pr.ax[0] : [(pr.p[0][0] + pr.p[3][0]) / 2, (pr.p[0][1] + pr.p[3][1]) / 2];
+        const Q = pr.ax ? pr.ax[1] : [(pr.p[1][0] + pr.p[2][0]) / 2, (pr.p[1][1] + pr.p[2][1]) / 2];
         zs.forEach((z, i) => {
           const nom = `${piece} ${b.id} · portique ${i + 1}`;
           if (S.f === 'rond' || S.f === 'tube') {

@@ -1,5 +1,5 @@
 // Scène : calques SVG (grille, croquis, dessin, aperçu), dessin à l'écran, zoom, consignes, curseurs.
-import { etat, feuille, versEcran, versMonde, cadrer } from './etat.js';
+import { etat, feuille, versEcran, versMonde, cadrer, paireDe } from './etat.js';
 import { primitivesFeuille, primitivesBarre, primitivesCote, NOM_BARRE, NOM_NOEUD, dist, dot, sub, unite, normale, borne, fr } from './geometrie.js';
 import { echelle, svgEcran, svgGrille, DEFS, esc, ORANGE } from './rendu.js';
 import { majCroquis } from './croquis.js';
@@ -39,7 +39,7 @@ export function dessiner() {
   if (cle !== cleGrille) { cleGrille = cle; cGrille.innerHTML = svgGrille(vue, W, H, etat.pas); }
   majCroquis(cFond);
   const f = feuille();
-  etat.prims = f ? primitivesFeuille(f, echelle(vue.z), true) : [];
+  etat.prims = f ? primitivesFeuille(f, echelle(vue.z), true, paireDe(f)) : [];
   cDessin.innerHTML = svgEcran(etat.prims, vue, W, H, etat.sel, etat.survol);
   cApercu.innerHTML = apercu() + repere();
   infos();

@@ -1,7 +1,7 @@
 // Vue 3D : le portique de la feuille est répété le long de z (entraxe × nombre), vu en perspective.
 // Deux modes : « volumes » (vraies sections, couleur de la matière, faces ombrées) et « traits » (fil de fer).
 import {
-  primitivesBarre, carteNoeuds, borne, estPlan, analysePlan, bandeMur, epaisseur, MURS,
+  primitivesBarre, barresEnSections, carteNoeuds, borne, estPlan, analysePlan, bandeMur, epaisseur, MURS,
   H_PORTE, H_ALLEGE, H_LINTEAU, sub, add, mul, unite, normale, dist,
 } from './geometrie.js';
 import { sectionDe, matiereDe, MATIERES } from './matieres.js';
@@ -82,22 +82,18 @@ export function volumes3D(f) {
   const porteurs = new Set();
   // sections: true → geometrie.js rend les barres en bandes à leur vraie largeur.
   const K = { su: 1, cote: 1, txt: { 1: 1, 2: 1, 3: 1 }, sections: true };
-  for (const b of f.barres) {
-    const A = N.get(b.a);
-    const B = N.get(b.b);
-    if (!A || !B) continue;
+  // Jonctions faites une fois pour toute la feuille : mêmes coupes qu'à l'écran.
+  for (const { b, prims: out } of barresEnSections(f, K, N)) {
     if (b.type !== 'sol' && b.type !== 'mur') { porteurs.add(b.a); porteurs.add(b.b); }
     const S = sectionDe(b);
     const M = matiereDe(b);
-    const out = [];
-    primitivesBarre(b, [A.x, A.y], [B.x, B.y], K, out);
     const pousser = (pts, att = 1, al = 1) => { if (faces.length < MAX_FACES) faces.push({ pts, id: b.id, c: M.c, att, al }); };
     for (const pr of out) {
       if (pr.st === 'zone' || pr.st === 'hachure') continue;
       if (VOL.has(pr.st) && pr.p.length === 4) {
         const k = pr.st === 'diagonale-vol' ? 0.6 : 1;
         const d = Math.max(0.004, S.b * k);
-        const [P, Q] = axeBande(pr.p);
+        const [P, Q] = pr.ax || axeBande(pr.p);
         for (const z of zs) {
           if (S.f === 'rond' || S.f === 'tube') rond3D(P, Q, d, z, pousser);
           else extruder(pr.p, z - d / 2, z + d / 2, pousser);
