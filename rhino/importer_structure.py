@@ -181,15 +181,20 @@ def main():
     try:
         for bar in d.get("barres", []):
             etiq = section_texte(bar)
+            m = bar.get("moise") or 0  # moise : une piece de chaque cote, decalee de +/- m
             for z in zs:
-                n += poser(volume_barre(bar, z, k), bar.get("piece", "poutre"), bar.get("matiere"), mats, etiq)
+                for dz in ((-m, m) if m else (0,)):
+                    n += poser(volume_barre(bar, z + dz, k), bar.get("piece", "poutre"), bar.get("matiere"), mats, etiq)
         for nap in d.get("nappes", []):
             n += poser(volume_nappe(nap["contour"], z0, z1, k), nap.get("type", "toit"), nap.get("matiere"), mats, "")
         for t in d.get("toiles", []):
             n += poser(surface_toile(t["ligne"], z0, z1, k), "toile", t.get("matiere"), mats, "")
         pa = d.get("panne", {})
         for p in d.get("pannes", []):
-            brep = volume_panne(p["p"], pa.get("b", 0.08), pa.get("h", 0.16), pa.get("z0", z0), pa.get("z1", z1), k)
+            if p.get("contour"):  # posee sur la poutre, tournee comme elle
+                brep = volume_nappe(p["contour"], pa.get("z0", z0), pa.get("z1", z1), k)
+            else:
+                brep = volume_panne(p["p"], pa.get("b", 0.08), pa.get("h", 0.16), pa.get("z0", z0), pa.get("z1", z1), k)
             n += poser(brep, "panne", pa.get("matiere", "c24"), mats, "8 x 16 cm")
     finally:
         rs.EnableRedraw(True)

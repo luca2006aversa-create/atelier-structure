@@ -1,7 +1,7 @@
 // Vue 3D : le portique de la feuille est répété le long de z (entraxe × nombre), vu en perspective.
 // Deux modes : « volumes » (vraies sections, couleur de la matière, faces ombrées) et « traits » (fil de fer).
 import {
-  primitivesBarre, barresEnSections, carteNoeuds, borne, estPlan, analysePlan, bandeMur, epaisseur, MURS,
+  primitivesBarre, barresEnSections, pannesCoupe, PANNE, carteNoeuds, borne, estPlan, analysePlan, bandeMur, epaisseur, MURS,
   H_PORTE, H_ALLEGE, H_LINTEAU, sub, add, mul, unite, normale, dist,
 } from './geometrie.js';
 import { sectionDe, matiereDe, MATIERES } from './matieres.js';
@@ -34,7 +34,6 @@ const NAPPES = new Set(['toit-vol', 'dalle']);
 const MAX_FACES = 24000;
 const LUMIERE = (() => { const v = [-0.4, 0.82, 0.42]; const n = Math.hypot(v[0], v[1], v[2]); return [v[0] / n, v[1] / n, v[2] / n]; })();
 // Section des pannes qui relient les portiques (ordre de grandeur d'un chevron).
-const PANNE = [0.08, 0.16];
 
 const aire2 = (p) => { let s = 0; for (let i = 0; i < p.length; i++) { const q = p[(i + 1) % p.length]; s += p[i][0] * q[1] - q[0] * p[i][1]; } return s; };
 
@@ -79,12 +78,11 @@ export function volumes3D(f) {
   const { e, nb, zs, z0, z1 } = portiques(f);
   const faces = [];
   const segs = [];
-  const porteurs = new Set();
   // sections: true → geometrie.js rend les barres en bandes à leur vraie largeur.
   const K = { su: 1, cote: 1, txt: { 1: 1, 2: 1, 3: 1 }, sections: true };
   // Jonctions faites une fois pour toute la feuille : mêmes coupes qu'à l'écran.
-  for (const { b, prims: out } of barresEnSections(f, K, N)) {
-    if (b.type !== 'sol' && b.type !== 'mur') { porteurs.add(b.a); porteurs.add(b.b); }
+  const liste = barresEnSections(f, K, N);
+  for (const { b, prims: out } of liste) {
     const S = sectionDe(b);
     const M = matiereDe(b);
     const pousser = (pts, att = 1, al = 1) => { if (faces.length < MAX_FACES) faces.push({ pts, id: b.id, c: M.c, att, al }); };
@@ -94,7 +92,10 @@ export function volumes3D(f) {
         const k = pr.st === 'diagonale-vol' ? 0.6 : 1;
         const d = Math.max(0.004, S.b * k);
         const [P, Q] = pr.ax || axeBande(pr.p);
-        for (const z of zs) {
+        // Une moise : deux pièces, une de chaque côté des barres qu'elle serre.
+        const cotes = pr.decal ? [-pr.decal, pr.decal] : [0];
+        for (const z0p of zs) for (const dz of cotes) {
+          const z = z0p + dz;
           if (S.f === 'rond' || S.f === 'tube') rond3D(P, Q, d, z, pousser);
           else extruder(pr.p, z - d / 2, z + d / 2, pousser);
         }
@@ -117,15 +118,11 @@ export function volumes3D(f) {
       }
     }
   }
-  // Pannes : les nœuds hors sol reliés à une barre porteuse filent d'un portique à l'autre.
+  // Pannes : posées sur le dessus des poutres, elles filent d'un portique à l'autre.
   if (nb > 1) {
-    const dp = PANNE[0];
-    const hp = PANNE[1];
     const cp = MATIERES.c24.c;
-    for (const n of f.noeuds) {
-      if (n.y <= 0.01 || !porteurs.has(n.id)) continue;
-      const r = [[n.x - dp / 2, n.y - hp / 2], [n.x + dp / 2, n.y - hp / 2], [n.x + dp / 2, n.y + hp / 2], [n.x - dp / 2, n.y + hp / 2]];
-      extruder(r, z0, z1, (pts) => { if (faces.length < MAX_FACES) faces.push({ pts, id: n.id, c: cp, att: 1, al: 1 }); });
+    for (const pn of pannesCoupe(f, liste)) {
+      extruder(pn.p, z0, z1, (pts) => { if (faces.length < MAX_FACES) faces.push({ pts, id: pn.id, c: cp, att: 1, al: 1 }); });
     }
   }
   return { segs, faces, z0, z1, e };
@@ -137,13 +134,11 @@ export function modele3D(f) {
   const { e, nb, zs, z0, z1 } = portiques(f);
   const segs = [];
   const faces = [];
-  const porteurs = new Set();
   const K = { su: 1, cote: 1, txt: { 1: 1, 2: 1, 3: 1 } };
   for (const b of f.barres) {
     const A = N.get(b.a);
     const B = N.get(b.b);
     if (!A || !B) continue;
-    if (b.type !== 'sol' && b.type !== 'mur') { porteurs.add(b.a); porteurs.add(b.b); }
     const out = [];
     primitivesBarre(b, [A.x, A.y], [B.x, B.y], K, out);
     for (const pr of out) {
@@ -166,7 +161,7 @@ export function modele3D(f) {
     }
   }
   // Lisses : les nœuds hors sol reliés à une barre porteuse filent d'un portique à l'autre.
-  if (nb > 1) for (const n of f.noeuds) if (n.y > 0.01 && porteurs.has(n.id)) segs.push({ a: [n.x, n.y, z0], b: [n.x, n.y, z1], role: 'lisse', id: n.id });
+  if (nb > 1) for (const pn of pannesCoupe(f)) segs.push({ a: [pn.c[0], pn.c[1], z0], b: [pn.c[0], pn.c[1], z1], role: 'lisse', id: pn.id });
   return { segs, faces, z0, z1, e };
 }
 

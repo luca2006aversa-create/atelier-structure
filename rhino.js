@@ -1,7 +1,7 @@
 // Passerelle vers Rhino et Grasshopper.
 // On n'exporte pas des faces mais la structure elle-même : un axe, une section, une matière
 // par barre. Rhino rebâtit les volumes ; Grasshopper peut repartir des axes et tout refaire.
-import { barresEnSections, carteNoeuds, borne } from './geometrie.js';
+import { barresEnSections, pannesCoupe, PANNE, carteNoeuds, borne } from './geometrie.js';
 import { sectionDe, matiereDe, cleMatiere, MATIERES } from './matieres.js';
 
 export const VERSION = 1;
@@ -9,7 +9,6 @@ export const VERSION = 1;
 // Les mêmes familles que la vue 3D, pour que l'export et l'image à l'écran racontent la même chose.
 const VOL = new Set(['poteau-vol', 'poutre-vol', 'bequille-vol', 'entretoise-vol', 'cable-vol', 'membrure-vol', 'diagonale-vol']);
 const NAPPES = new Set(['toit-vol', 'dalle']);
-const PANNE = [0.08, 0.16];
 
 const r4 = (v) => Math.round(v * 10000) / 10000;
 const pt2 = (p) => [r4(p[0]), r4(p[1])];
@@ -42,12 +41,11 @@ export function versRhino(f) {
   const barres = [];
   const nappes = [];
   const toiles = [];
-  const porteurs = new Set();
   const utilisees = new Set();
 
   // Jonctions faites (onglets, arrêts contre les faces) : Rhino reçoit les longueurs réelles.
-  for (const { b, prims: out } of barresEnSections({ ...f, barres: f.barres || [] }, K, N)) {
-    if (b.type !== 'sol' && b.type !== 'mur') { porteurs.add(b.a); porteurs.add(b.b); }
+  const liste = barresEnSections({ ...f, barres: f.barres || [] }, K, N);
+  for (const { b, prims: out } of liste) {
     const S = sectionDe(b);
     const mat = cleMatiere(b);
     for (const pr of out) {
@@ -68,6 +66,8 @@ export function versRhino(f) {
           b: r4(Math.max(0.004, S.b * k)), // largeur, perpendiculaire au plan de la coupe
           h: r4(Math.max(0.004, h)), // hauteur, dans le plan de la coupe
           ep: S.e ? r4(S.e) : null, // épaisseur d'un tube
+          moise: pr.decal ? r4(pr.decal) : null, // moise : deux pièces décalées de ± cette valeur en z
+          continue_sur: pr.ids || null, // pièce continue : barres qu'elle remplace
           a: pt2(a),
           c: pt2(c),
           longueur: r4(Math.hypot(c[0] - a[0], c[1] - a[1])),
@@ -85,10 +85,8 @@ export function versRhino(f) {
   // Pannes : elles relient les portiques, comme dans la vue 3D.
   const pannes = [];
   if (P.nb > 1) {
-    for (const n of f.noeuds || []) {
-      if (n.y <= 0.01 || !porteurs.has(n.id)) continue;
-      pannes.push({ id: n.id, p: pt2([n.x, n.y]) });
-    }
+    // Posées sur le dessus des poutres, tournées comme elles (ang en radians, sens de la largeur).
+    for (const pn of pannesCoupe({ ...f, barres: f.barres || [] }, liste)) pannes.push({ id: pn.id, p: pt2(pn.c), ang: r4(pn.ang), contour: pn.p.map(pt2) });
     if (pannes.length) utilisees.add('c24');
   }
 

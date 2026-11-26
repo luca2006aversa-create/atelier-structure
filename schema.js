@@ -29,7 +29,7 @@ const chaleur = (t) => {
 };
 
 // ---------- Mise en page ----------
-function cadre(R, W, H, marge) {
+function cadre(R, W, H, marge, haut = marge) {
   let x0 = Infinity; let x1 = -Infinity; let y0 = Infinity; let y1 = -Infinity;
   for (const el of R.els) for (const p of [el.A, el.B]) {
     if (p[0] < x0) x0 = p[0];
@@ -37,10 +37,12 @@ function cadre(R, W, H, marge) {
     if (p[1] < y0) y0 = p[1];
     if (p[1] > y1) y1 = p[1];
   }
-  const s = Math.min((W - 2 * marge) / Math.max(0.5, x1 - x0), (H - 2 * marge) / Math.max(0.5, y1 - y0));
+  // « haut » : place gardée au-dessus pour les flèches des objets posés.
+  const Hu = H - marge - haut;
+  const s = Math.min((W - 2 * marge) / Math.max(0.5, x1 - x0), Hu / Math.max(0.5, y1 - y0));
   const cx = (x0 + x1) / 2;
-  const cy = (y0 + y1) / 2;
-  return { s, X: (x) => W / 2 + (x - cx) * s, Y: (y) => H / 2 - (y - cy) * s, y0, y1, x0, x1 };
+  const dy = (Hu - (y1 - y0) * s) / 2;
+  return { s, X: (x) => W / 2 + (x - cx) * s, Y: (y) => haut + dy + (y1 - y) * s, y0, y1, x0, x1 };
 }
 
 const ligne = (V, A, B, st) => `<line x1="${r1(V.X(A[0]))}" y1="${r1(V.Y(A[1]))}" x2="${r1(V.X(B[0]))}" y2="${r1(V.Y(B[1]))}" ${st}/>`;
@@ -79,18 +81,48 @@ function cote(xa, xb, y, t) {
     + texte((xa + xb) / 2, y - 6, t, GRIS, 11);
 }
 
+// Épaisseur d'une pièce : les membrures d'un treillis sont plus fortes que ses diagonales.
+const epaisseur = (el, base) => (el.secondaire ? base * 0.55 : base);
+// Nœuds intérieurs d'un treillis : petits ronds, comme des articulations.
+function noeudsTreillis(R, V, col = BLANC) {
+  const vus = new Set();
+  let o = '';
+  for (const el of R.els) {
+    if (el.b.type !== 'treillis') continue;
+    for (const [id, p] of [[el.a, el.A], [el.c, el.B]]) {
+      if (vus.has(id)) continue;
+      vus.add(id);
+      o += `<circle cx="${r1(V.X(p[0]))}" cy="${r1(V.Y(p[1]))}" r="2.6" fill="${FOND}" stroke="${col}" stroke-width="1.1"/>`;
+    }
+  }
+  return o;
+}
+// Étiquettes qui s'écartent quand elles se touchent.
+function etiqueteur() {
+  const pris = [];
+  return (x, y, nx, ny, larg) => {
+    for (const dec of [0, 14, -14, 28, -28]) {
+      const tx = x + nx * dec;
+      const ty = y + ny * dec;
+      if (!pris.some((p) => Math.abs(p[0] - tx) < (p[2] + larg) / 2 + 2 && Math.abs(p[1] - ty) < 15)) { pris.push([tx, ty, larg]); return [tx, ty]; }
+    }
+    return null;
+  };
+}
+
 // ---------- Les cinq lectures ----------
 function vueStatique(R, V, W, H) {
   let o = '';
-  for (const el of R.els) o += ligne(V, el.A, el.B, `stroke="${BLANC}" stroke-width="1.6" stroke-linecap="round"`);
-  // Charges réparties : un trait et des flèches qui tombent sur la barre.
-  const qmax = Math.max(...R.els.map((e) => e.q));
-  for (const el of R.els) {
-    if (el.q < qmax * 0.25 || !el.plat) continue;
-    const d = 10 + 16 * (el.q / qmax);
-    const n = Math.max(2, Math.min(9, Math.round(el.L / 0.9)));
-    const A = [V.X(el.A[0]), V.Y(el.A[1])];
-    const B = [V.X(el.B[0]), V.Y(el.B[1])];
+  for (const el of R.els) o += ligne(V, el.A, el.B, `stroke="${BLANC}" stroke-width="${epaisseur(el, 1.6)}" stroke-linecap="round"`);
+  o += noeudsTreillis(R, V);
+  // Charges réparties : un trait et des flèches qui tombent sur la barre (une seule fois par barre, même découpée).
+  const qmax = Math.max(1e-6, ...R.lignes.map((l) => l.q));
+  for (const l of R.lignes) {
+    if (l.q < qmax * 0.05) continue;
+    const d = 10 + 16 * (l.q / qmax);
+    const A = [V.X(l.A.x), V.Y(l.A.y)];
+    const B = [V.X(l.B.x), V.Y(l.B.y)];
+    const n = Math.max(2, Math.min(12, Math.round(Math.hypot(B[0] - A[0], B[1] - A[1]) / 34)));
     o += `<line x1="${r1(A[0])}" y1="${r1(A[1] - d)}" x2="${r1(B[0])}" y2="${r1(B[1] - d)}" stroke="${ORANGE}" stroke-width="1.2"/>`;
     for (let i = 0; i <= n; i++) {
       const t = i / n;
@@ -98,7 +130,23 @@ function vueStatique(R, V, W, H) {
       const y = A[1] + (B[1] - A[1]) * t;
       o += fleche(x, y - d, x, y - 2, ORANGE, 1, 4);
     }
-    o += texte((A[0] + B[0]) / 2, (A[1] + B[1]) / 2 - d - 6, nb(el.q) + ' kN/m', ORANGE, 11);
+    o += texte((A[0] + B[0]) / 2, (A[1] + B[1]) / 2 - d - 6, nb(l.q) + ' kN/m', ORANGE, 11);
+  }
+  // Objets posés : une grosse flèche et leur poids.
+  const parNoeud = new Map();
+  for (const F of R.listeForces) {
+    const v = parNoeud.get(F.id) || { x: F.x, y: F.y, v: 0, noms: [] };
+    v.v += F.v;
+    if (F.nom) v.noms.push(F.nom);
+    parNoeud.set(F.id, v);
+  }
+  for (const F of parNoeud.values()) {
+    const x = V.X(F.x);
+    const y = V.Y(F.y);
+    o += fleche(x, y - 46, x, y - 3, ORANGE, 2.4, 8);
+    const nom = F.noms.length === 1 ? F.noms[0] : F.noms.length ? F.noms.length + ' objets' : '';
+    o += texte(x, y - 64, nom, ORANGE, 11);
+    o += texte(x, y - 51, nb(F.v) + ' kN', ORANGE, 11);
   }
   // Appuis et réactions.
   const ybas = V.Y(V.y0);
@@ -127,12 +175,16 @@ function vueNormal(R, V) {
     const col = el.N >= 0 ? ORANGE : BLANC;
     o += ligne(V, el.A, el.B, `stroke="${col}" stroke-width="${r1(1 + 6 * t)}" stroke-linecap="round" opacity="${r1(0.35 + 0.65 * t)}"`);
   }
-  for (const el of R.els) {
+  o += noeudsTreillis(R, V, GRIS);
+  const place = etiqueteur();
+  for (const el of R.els.slice().sort((a, b) => Math.abs(b.N) - Math.abs(a.N))) {
     if (Math.abs(el.N) < m * 0.12) continue;
-    const x = (V.X(el.A[0]) + V.X(el.B[0])) / 2;
-    const y = (V.Y(el.A[1]) + V.Y(el.B[1])) / 2;
-    o += `<rect x="${r1(x - 26)}" y="${r1(y - 8)}" width="52" height="15" rx="3" fill="${FOND}" opacity=".8"/>`;
-    o += texte(x, y + 4, (el.N >= 0 ? '+' : '−') + nb(Math.abs(el.N)), el.N >= 0 ? ORANGE : BLANC, 11);
+    const ax = V.X(el.A[0]); const ay = V.Y(el.A[1]); const bx = V.X(el.B[0]); const by = V.Y(el.B[1]);
+    const L = Math.hypot(bx - ax, by - ay) || 1;
+    const p = place((ax + bx) / 2, (ay + by) / 2, -(by - ay) / L, (bx - ax) / L, 52);
+    if (!p) continue;
+    o += `<rect x="${r1(p[0] - 26)}" y="${r1(p[1] - 8)}" width="52" height="15" rx="3" fill="${FOND}" opacity=".8"/>`;
+    o += texte(p[0], p[1] + 4, (el.N >= 0 ? '+' : '−') + nb(Math.abs(el.N)), el.N >= 0 ? ORANGE : BLANC, 11);
   }
   return o;
 }
@@ -255,7 +307,8 @@ const VUES = { statique: vueStatique, normal: vueNormal, moment: vueMoment, defo
 export function schema(f, mode = 'statique', W = 760, H = 480) {
   const R = calculer(f);
   if (R.erreur) return { erreur: R.erreur };
-  const V = cadre(R, W, H - 36, Math.max(30, Math.min(72, W * 0.09)));
+  const marge = Math.max(30, Math.min(72, W * 0.09));
+  const V = cadre(R, W, H - 36, marge, R.listeForces.length && mode === 'statique' ? Math.max(marge, 84) : marge);
   const corps = (VUES[mode] || vueStatique)(R, V, W, H - 36);
   const titre = (MODES.find((m) => m[0] === mode) || MODES[0])[1];
   let bas = '';
@@ -277,8 +330,8 @@ export function schema(f, mode = 'statique', W = 760, H = 480) {
 export function tableauBarres(R) {
   const par = new Map();
   for (const el of R.els) {
-    const k = el.b.type + '|' + el.cle + '|' + texteSection(el.b);
-    const v = par.get(k) || { type: el.b.type, mat: el.mat.nom, sec: texteSection(el.b), n: 0, L: 0, N: 0, taux: 0 };
+    const k = el.b.type + '|' + (el.role || '') + '|' + el.cle + '|' + texteSection(el.b);
+    const v = par.get(k) || { type: el.b.type, role: el.role || '', mat: el.mat.nom, sec: texteSection(el.b), n: 0, L: 0, N: 0, taux: 0 };
     v.n++;
     v.L += el.L;
     v.N = Math.abs(el.N) > Math.abs(v.N) ? el.N : v.N;

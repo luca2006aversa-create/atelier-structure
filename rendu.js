@@ -36,6 +36,9 @@ const ECRAN = {
   'cote-txt': { f: '#fff' },
   texte: { f: '#fff' },
   trait: { s: '#8c8c8c', w: 1.75 },
+  charge: { s: '#d9733f', w: 1.5 },
+  'charge-pointe': { f: '#d9733f' },
+  'charge-txt': { f: '#d9733f', g: 600 },
   // Plan
   murp: { f: '#cfcfcf' },
   cloison: { f: '#7d7d7d' },
@@ -60,6 +63,8 @@ const ECRAN = {
   'membrure-vol': { s: '#fff', w: 1, f: '#4a4a4a' },
   'diagonale-vol': { s: '#fff', w: 1, f: '#3c3c3c' },
   'toit-vol': { s: '#fff', w: 1, f: '#4a4a4a' },
+  // Pièce absorbée par une barre continue : invisible, mais on peut la cliquer (orange quand choisie).
+  troncon: { s: 'none', w: 1, f: 'transparent' },
   detail: { s: '#bdbdbd', w: 0.7 },
   'detail-cache': { s: '#8c8c8c', w: 0.7, d: [4, 3] },
   axe: { s: '#6e6e6e', w: 0.6, d: [12, 3, 2, 3] },

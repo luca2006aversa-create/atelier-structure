@@ -4,7 +4,7 @@
 // Le DXF 2D reprend le dessin de la feuille, barres à leur vraie largeur.
 // Repère des fichiers : mètres, Z vers le haut. Coupe : x = largeur, y = profondeur, z = hauteur. Plan : x, y du plan, z = hauteur.
 import {
-  primitivesBarre, barresEnSections, primitivesFeuille, carteNoeuds, borne, boite, estPlan, analysePlan, bandeMur, epaisseur, MURS,
+  primitivesBarre, barresEnSections, pannesCoupe, PANNE, primitivesFeuille, carteNoeuds, borne, boite, estPlan, analysePlan, bandeMur, epaisseur, MURS,
   H_PORTE, H_ALLEGE, H_LINTEAU, sub, add, mul, unite, normale, dist,
 } from './geometrie.js';
 import { sectionDe, matiereDe, cleMatiere, MATIERES } from './matieres.js';
@@ -12,7 +12,6 @@ import { echelle } from './rendu.js';
 
 const VOL = new Set(['poteau-vol', 'poutre-vol', 'bequille-vol', 'entretoise-vol', 'cable-vol', 'membrure-vol', 'diagonale-vol']);
 const NAPPES = new Set(['toit-vol', 'dalle']);
-const PANNE = [0.08, 0.16]; // même section que la vue 3D
 const CERCLE = 16; // côtés d'une section ronde
 
 // Famille de chaque élément : nom du calque (DXF), classe IFC.
@@ -67,11 +66,10 @@ function prismesCoupe(f) {
   const X = [1, 0, 0];
   const Y = [0, 0, 1]; // v vers le haut ; Z = X × Y = (0, -1, 0)
   const out = [];
-  const porteurs = new Set();
   const pousser = (s) => s && out.push(s);
   // Jonctions faites une fois pour toute la feuille : mêmes coupes qu'à l'écran.
-  for (const { b, prims } of barresEnSections(f, K, N)) {
-    if (b.type !== 'sol' && b.type !== 'mur') { porteurs.add(b.a); porteurs.add(b.b); }
+  const liste = barresEnSections(f, K, N);
+  for (const { b, prims } of liste) {
     const S = sectionDe(b);
     const mat = cleMatiere(b);
     for (const pr of prims) {
@@ -80,8 +78,10 @@ function prismesCoupe(f) {
         const d = Math.max(0.004, S.b * (pr.st === 'diagonale-vol' ? 0.6 : 1));
         const P = pr.ax ? pr.ax[0] : [(pr.p[0][0] + pr.p[3][0]) / 2, (pr.p[0][1] + pr.p[3][1]) / 2];
         const Q = pr.ax ? pr.ax[1] : [(pr.p[1][0] + pr.p[2][0]) / 2, (pr.p[1][1] + pr.p[2][1]) / 2];
-        zs.forEach((z, i) => {
-          const nom = `${piece} ${b.id} · portique ${i + 1}`;
+        const cotes = pr.decal ? [-pr.decal, pr.decal] : [0]; // moise : une pièce de chaque côté
+        zs.flatMap((z) => cotes.map((dz) => z + dz)).forEach((z, j) => {
+          const i = Math.floor(j / cotes.length);
+          const nom = `${piece} ${b.id} · portique ${i + 1}` + (cotes.length > 1 ? (j % 2 ? ' · avant' : ' · arrière') : '');
           if (S.f === 'rond' || S.f === 'tube') {
             // Section ronde : on pousse un cercle le long de l'axe de la barre.
             const a = [P[0], -z, P[1]];
@@ -105,12 +105,7 @@ function prismesCoupe(f) {
   }
   // Pannes : elles relient les portiques, comme dans la vue 3D.
   if (nb > 1) {
-    const [dp, hp] = PANNE;
-    for (const n of f.noeuds) {
-      if (n.y <= 0.01 || !porteurs.has(n.id)) continue;
-      const r = [[n.x - dp / 2, n.y - hp / 2], [n.x + dp / 2, n.y - hp / 2], [n.x + dp / 2, n.y + hp / 2], [n.x - dp / 2, n.y + hp / 2]];
-      pousser(prisme('panne', 'c24', `panne ${n.id}`, r, [0, -z0, 0], X, Y, z1 - z0));
-    }
+    pannesCoupe(f, liste).forEach((pn, i) => pousser(prisme('panne', 'c24', `panne ${i + 1} (${pn.id})`, pn.p, [0, -z0, 0], X, Y, z1 - z0)));
   }
   return out;
 }
@@ -270,6 +265,7 @@ export function dxf2D(f) {
     E.push('0', 'SEQEND', '8', nom);
   };
   for (const pr of prims) {
+    if (pr.st === 'troncon') continue; // pièce absorbée par une barre continue : déjà dessinée
     const nom = lieu(pr.st);
     if (pr.k === 'l' && pr.p?.length === 2) E.push('0', 'LINE', '8', nom, '10', q6(pr.p[0][0]), '20', q6(pr.p[0][1]), '30', '0', '11', q6(pr.p[1][0]), '21', q6(pr.p[1][1]), '31', '0');
     else if ((pr.k === 'l' || pr.k === 'p') && pr.p?.length > 1) poly(nom, pr.p, pr.ferme === true);

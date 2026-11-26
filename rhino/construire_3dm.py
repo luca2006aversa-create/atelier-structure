@@ -164,13 +164,18 @@ def construire(chemin_json, chemin_3dm, depart=None):
     n = 0
     for bar in d.get("barres", []):
         sec = section_texte(bar)
+        m = bar.get("moise") or 0  # moise : une piece de chaque cote, decalee de +/- m
         for z in zs:
-            n += poser(barre(bar, z), bar.get("piece", "poutre"), bar.get("matiere"), sec)
+            for dz in ((-m, m) if m else (0,)):
+                n += poser(barre(bar, z + dz), bar.get("piece", "poutre"), bar.get("matiere"), sec)
     for nap in d.get("nappes", []):
         n += poser(nappe(nap["contour"], z0, z1), nap.get("type", "toit"), nap.get("matiere"), "")
     pa = d.get("panne", {})
     for p in d.get("pannes", []):
-        g = panne(p["p"], pa.get("b", 0.08), pa.get("h", 0.16), pa.get("z0", z0), pa.get("z1", z1))
+        if p.get("contour"):  # posee sur la poutre, tournee comme elle
+            g = nappe(p["contour"], pa.get("z0", z0), pa.get("z1", z1))
+        else:
+            g = panne(p["p"], pa.get("b", 0.08), pa.get("h", 0.16), pa.get("z0", z0), pa.get("z1", z1))
         n += poser(g, "panne", pa.get("matiere", "c24"), "8 x 16 cm")
 
     doc.Write(chemin_3dm, 7)

@@ -1,7 +1,8 @@
 // Calcul de portique plan : chaque barre devient un élément de poutre (3 degrés de liberté par nœud).
 // On en tire l'effort normal, le moment, la déformée et le taux de travail — de quoi dessiner le schéma structurel.
 // Unités : mètres, kilonewtons. x vers la droite, y vers le haut.
-import { carteNoeuds, dist } from './geometrie.js';
+import { carteNoeuds, dist, lerp, unite, sub, add, mul, versLeBas } from './geometrie.js';
+import { chargesBarre, chargesNoeud, position, ELU } from './charges.js';
 import { sectionDe, matiereDe, proprietes, poidsML, MATIERES } from './matieres.js';
 
 // Barres qui portent vraiment. Le reste (toit, toile, murs, repères) n'est que de la peau.
@@ -80,12 +81,14 @@ function abritee(el, els) {
 }
 
 // Construit le modèle de calcul à partir d'une feuille de coupe.
+// Un treillis est découpé en ses vraies pièces (membrures, diagonales, montants) ; un objet posé sur une barre
+// la coupe en deux à cet endroit : le calcul voit alors une force en un nœud.
 export function modele(f) {
   const N = carteNoeuds(f);
   const C = chargesDe(f);
   const entraxe = Math.max(0.5, +(f.trois_d || {}).entraxe || 6);
-  const els = [];
-  const utiles = new Set();
+  // 1. Une ligne par barre porteuse : son axe dessiné.
+  const pre = [];
   for (const b of f.barres) {
     if (!PORTEUSES.has(b.type)) continue;
     const a = N.get(b.a);
@@ -96,44 +99,142 @@ export function modele(f) {
     const L = dist(A, B);
     if (L < 0.02) continue;
     let P = proprietes(sectionDe(b));
-    const M = matiereDe(b);
-    // Un treillis travaille par ses deux membrures écartées : inertie = 2 · A · (h/2)².
-    if (b.type === 'treillis') {
-      const ht = Math.max(0.2, Math.abs(b.treillis?.h ?? 1.5));
-      const At = 2 * P.A;
-      const It = (P.A * ht * ht) / 2;
-      P = { A: At, Iy: It, Wy: P.A * ht, iy: Math.sqrt(It / At), h: ht, b: P.b };
-    }
     // Un câble ne plie pas : il ne fait que tirer. On annule sa raideur de flexion.
     if (b.type === 'cable') P = { ...P, Iy: P.Iy * 1e-6, Wy: P.Wy * 1e6 };
+    const M = matiereDe(b);
     const cle = Object.keys(MATIERES).find((k) => MATIERES[k] === M) || 'gl24h';
-    const dy = Math.abs(B[1] - A[1]) / L;
-    els.push({
-      b, id: b.id, a: b.a, c: b.b, A, B, L, P, mat: M, cle,
-      E: M.E * 1000, // MPa -> kN/m²
-      plat: dy < PLAT,
-      poids: poidsML(b) * (b.type === 'treillis' ? 2.5 : 1), // membrures + diagonales
-    });
-    utiles.add(b.a);
-    utiles.add(b.b);
+    pre.push({ b, A, B, L, P, M, cle, E: M.E * 1000, plat: Math.abs(B[1] - A[1]) / L < PLAT, poids: poidsML(b) });
   }
-  if (!els.length) return { erreur: 'Pas de barre porteuse : dessine des poteaux et des poutres.' };
-  const noeuds = f.noeuds.filter((n) => utiles.has(n.id));
+  if (!pre.length) return { erreur: 'Pas de barre porteuse : dessine des poteaux et des poutres.' };
+  // 2. Charges réparties par barre (kN/m, sans le poids propre) : toiture ou plancher, plus ce qu'on a ajouté.
+  for (const p of pre) {
+    let g = 0;
+    let v = 0;
+    if (p.plat && p.b.type !== 'diagonale' && p.b.type !== 'cable') {
+      const sous = abritee(p, pre);
+      g = (sous ? C.plancherG : C.toitG) * entraxe;
+      v = (sous ? C.exploitation : C.neige) * entraxe;
+    }
+    for (const c of chargesBarre(p.b)) {
+      if (c.k === 'ponctuelle') continue;
+      const w = c.k === 'surface' ? +c.v * entraxe : +c.v;
+      if (c.cat === 'G') g += w; else v += w;
+    }
+    p.qg = g;
+    p.qv = v;
+  }
+  // 3. Nœuds : ceux de la feuille, plus ceux qu'on crée (nœuds du treillis, points où pèse un objet).
+  const noeuds = [];
+  const parId = new Map();
+  let neuf = 0;
+  const garder = (n) => { if (!parId.has(n.id)) { parId.set(n.id, n); noeuds.push(n); } return n.id; };
+  const pointEn = (x, y) => {
+    for (const n of f.noeuds) if (Math.abs(n.x - x) < 0.03 && Math.abs(n.y - y) < 0.03) return garder(n);
+    for (const n of noeuds) if (Math.abs(n.x - x) < 0.03 && Math.abs(n.y - y) < 0.03) return n.id;
+    return garder({ id: '·' + (++neuf), x, y, cree: true });
+  };
+  // Forces en un nœud (vers le bas, kN) : ELU et service.
+  const forces = new Map();
+  const listeForces = [];
+  const pousserForce = (id, c) => {
+    const n = parId.get(id);
+    if (!n) return;
+    const v = forces.get(id) || { elu: 0, els: 0 };
+    v.elu += (ELU[c.cat] || 1.5) * +c.v;
+    v.els += +c.v;
+    forces.set(id, v);
+    listeForces.push({ id, x: n.x, y: n.y, v: +c.v, nom: c.nom || '' });
+  };
+  // 4. Éléments.
+  const els = [];
+  const lignes = [];
+  const element = (p, a, c, role, qSurf) => {
+    const na = parId.get(a);
+    const nc = parId.get(c);
+    const A = [na.x, na.y];
+    const B = [nc.x, nc.y];
+    const L = dist(A, B);
+    if (L < 0.02) return;
+    els.push({
+      b: p.b, id: p.b.id, role, a, c, A, B, L, P: p.P, mat: p.M, cle: p.cle, E: p.E,
+      plat: Math.abs(B[1] - A[1]) / L < PLAT,
+      secondaire: role === 'diagonale' || role === 'montant',
+      poids: p.poids,
+      q: qSurf.elu + 1.35 * p.poids, // kN/m, vers le bas
+      qels: qSurf.els + p.poids, // service (ELS) : sans majoration, pour la flèche
+    });
+  };
+  const AUCUNE = { elu: 0, els: 0 };
+  for (const p of pre) {
+    const b = p.b;
+    const qs = { elu: 1.35 * p.qg + 1.5 * p.qv, els: p.qg + p.qv };
+    const objets = chargesBarre(b).filter((c) => c.k === 'ponctuelle');
+    if (b.type === 'treillis') {
+      const t = b.treillis || {};
+      const n = Math.max(1, Math.round(t.n || 6));
+      const sens = t.sens === -1 ? -1 : 1;
+      const off = mul(versLeBas(unite(sub(p.B, p.A))), -(t.h ?? 1.5) * sens);
+      const A2 = add(p.A, off);
+      const B2 = add(p.B, off);
+      const Pi = [];
+      const Qi = [];
+      for (let i = 0; i <= n; i++) {
+        Pi.push(i === 0 ? garder(N.get(b.a)) : i === n ? garder(N.get(b.b)) : pointEn(...lerp(p.A, p.B, i / n)));
+        Qi.push(pointEn(...lerp(A2, B2, i / n)));
+      }
+      const hautQ = A2[1] + B2[1] > p.A[1] + p.B[1];
+      const H = hautQ ? Qi : Pi;
+      const Bs = hautQ ? Pi : Qi;
+      for (let i = 0; i < n; i++) {
+        element(p, H[i], H[i + 1], 'membrure haute', qs);
+        element(p, Bs[i], Bs[i + 1], 'membrure basse', AUCUNE);
+      }
+      const D = (x, y) => element(p, x, y, 'diagonale', AUCUNE);
+      const Mt = (i) => element(p, Pi[i], Qi[i], 'montant', AUCUNE);
+      const forme = t.forme || 'warren';
+      if (forme === 'warren' || forme === 'warren_m') {
+        for (let i = 0; i < n; i++) { if (i % 2 === 0) D(Pi[i], Qi[i + 1]); else D(Qi[i], Pi[i + 1]); }
+        Mt(0);
+        Mt(n);
+        if (forme === 'warren_m') for (let i = 1; i < n; i++) Mt(i);
+      } else {
+        for (let i = 0; i <= n; i++) Mt(i);
+        const Ht = sens === 1 ? Qi : Pi;
+        const Bt = sens === 1 ? Pi : Qi;
+        const pratt = forme === 'pratt';
+        for (let i = 0; i < n; i++) {
+          const gauche = (i + 0.5) < n / 2;
+          if (gauche === pratt) D(Ht[i], Bt[i + 1]); else D(Ht[i + 1], Bt[i]);
+        }
+      }
+      // Un objet sur un treillis pèse sur le nœud de la membrure haute le plus proche.
+      for (const c of objets) pousserForce(H[Math.round(position(c) * n)], c);
+      if (qs.elu > 0) lignes.push({ A: parId.get(H[0]), B: parId.get(H[n]), q: qs.elu });
+      continue;
+    }
+    // Barre simple : coupée aux objets qu'elle porte.
+    const ts = [...new Set(objets.map(position))].sort((x, y) => x - y);
+    const ids = [garder(N.get(b.a))];
+    const idDe = new Map();
+    for (const t of ts) {
+      if (t <= 0.001) { idDe.set(t, ids[0]); continue; }
+      if (t >= 0.999) continue;
+      const id = pointEn(...lerp(p.A, p.B, t));
+      if (id !== ids[ids.length - 1]) ids.push(id);
+      idDe.set(t, id);
+    }
+    const fin = garder(N.get(b.b));
+    if (fin !== ids[ids.length - 1]) ids.push(fin);
+    for (const t of ts) if (t >= 0.999) idDe.set(t, fin);
+    for (let i = 0; i < ids.length - 1; i++) element(p, ids[i], ids[i + 1], null, qs);
+    for (const c of objets) pousserForce(idDe.get(position(c)), c);
+    if (qs.elu > 0) lignes.push({ A: { x: p.A[0], y: p.A[1] }, B: { x: p.B[0], y: p.B[1] }, q: qs.elu });
+  }
+  // Objets accrochés directement à un nœud.
+  for (const nd of f.noeuds) for (const c of chargesNoeud(nd)) if (parId.has(nd.id)) pousserForce(nd.id, c);
   if (noeuds.length > MAX_NOEUDS) return { erreur: 'Trop de nœuds (' + noeuds.length + ') : le calcul s\'arrête à ' + MAX_NOEUDS + '.' };
   const y0 = Math.min(...noeuds.map((n) => n.y));
-  // Charge de surface : toiture au-dessus, plancher en dessous. ELU = 1,35 G + 1,5 Q.
-  for (const el of els) {
-    let q = 0;
-    if (el.plat && el.b.type !== 'diagonale' && el.b.type !== 'cable') {
-      const sous = abritee(el, els);
-      const g = (sous ? C.plancherG : C.toitG) * entraxe;
-      const v = (sous ? C.exploitation : C.neige) * entraxe;
-      q = 1.35 * g + 1.5 * v;
-      el.qels = g + v + el.poids; // service (ELS) : charges sans majoration, pour la flèche
-    } else el.qels = el.poids;
-    el.q = q + 1.35 * el.poids; // kN/m, vers le bas
-  }
-  return { els, noeuds, appuis: appuis(noeuds, y0), y0, entraxe };
+  return { els, noeuds, appuis: appuis(noeuds.filter((n) => !n.cree), y0), y0, entraxe, forces, listeForces, lignes };
 }
 
 // ---------- Résolution ----------
@@ -219,6 +320,12 @@ export function calculer(f) {
       }
     }
   }
+  // Objets posés : une force verticale vers le bas au nœud.
+  for (const [id, F] of mo.forces) {
+    const i = idx.get(id);
+    const g = i === undefined ? -1 : num[i * 3 + 1];
+    if (g >= 0) P[g] -= F.elu;
+  }
   const U = resoudre(K, P, n);
   if (!U) return { erreur: 'Structure instable (il manque un contreventement ou un appui).' };
   const u = new Float64Array(nd * 3);
@@ -269,6 +376,13 @@ export function calculer(f) {
       reactions.set(nid, v);
     }
   }
+  // Un objet posé pile sur un appui descend directement au sol.
+  for (const [id, F] of mo.forces) {
+    if (!AP.has(id)) continue;
+    const v = reactions.get(id) || [0, 0];
+    v[1] += F.elu;
+    reactions.set(id, v);
+  }
   // Déplacements par nœud, pour la déformée.
   const depl = new Map();
   let dmax = 0;
@@ -283,8 +397,10 @@ export function calculer(f) {
   const taille = Math.max(1, Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)));
   if (!(dmax < taille * 0.2)) return { erreur: 'Structure instable ou bien trop souple (déplacement énorme) : ajoute un appui, un encastrement ou une diagonale.' };
   // Flèche en service (ELS) : le calcul est linéaire, on ramène la flèche ELU au rapport des charges totales.
-  const qELU = els.reduce((s, e) => s + e.q * e.L, 0);
-  const rELS = qELU > 0 ? els.reduce((s, e) => s + e.qels * e.L, 0) / qELU : 1;
+  let qELU = els.reduce((s, e) => s + e.q * e.L, 0);
+  let qELS = els.reduce((s, e) => s + e.qels * e.L, 0);
+  for (const F of mo.forces.values()) { qELU += F.elu; qELS += F.els; }
+  const rELS = qELU > 0 ? qELS / qELU : 1;
   for (const e of els) { e.flecheELU = e.fleche; e.fleche *= rELS; }
   return { ...mo, els, depl, dmax, reactions, Nmax, Mmax, tauxMax: Math.max(0, ...els.map((e) => e.taux)) };
 }

@@ -63,6 +63,10 @@ const T = {
   schema: P('M3 10h18|M6 10v6M18 10v6|M4 17h4M16 17h4|M7 2v5M12 2v5M17 2v5|M5.5 5.5L7 7l1.5-1.5M10.5 5.5L12 7l1.5-1.5M15.5 5.5L17 7l1.5-1.5'),
   volume: P('M12 3l8 4.5v9L12 21l-8-4.5v-9z|M12 12l8-4.5M12 12v9M12 12L4 7.5'),
   exporter: P('M12 3v12|M8 11l4 4 4-4|M4 16v4h16v-4'),
+  // Charges
+  charge: P('M12 3v10|M8 9.5l4 4 4-4|M3 18h18|M6 18v3M18 18v3'),
+  etage: P('M3 9h18M3 15h18|M6 9v6M18 9v6|M6 15v5M18 15v5|M12 2v4|M10.2 4.6L12 6l1.8-1.4'),
+  objet: R(7, 3, 10, 8, 1) + P('M12 11v6|M9 14.5l3 3 3-3|M3 21h18'),
   // Types de feuille
   'f-coupe': P('M2 20h20|M5 20V10l7-6 7 6v10|M5 13h14'),
   'f-plan': R(3, 4, 18, 16, 0.5) + P('M12 4v6M12 14v6|M12 10a4 4 0 0 1 4 4'),

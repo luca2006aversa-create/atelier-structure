@@ -370,3 +370,17 @@ svg.c-fleche {
 
 /* Menu d'export de la 3D : un peu plus large pour nommer les logiciels */
 .menu-export { width: 270px; }
+
+/* Charges ajoutées */
+.charge { border: 1px solid var(--ligne); border-radius: var(--r-petit); padding: var(--e2) var(--e3); margin-bottom: var(--e2); display: grid; gap: var(--e2); }
+.charge-tete { display: flex; align-items: center; gap: var(--e2); font-weight: 600; }
+.charge-tete span { flex: 1; }
+.charge-tete .a-icone, .charge-groupe .a-icone { width: 18px; height: 18px; color: var(--orange); flex: none; }
+.charge-effacer { background: none; border: 0; color: var(--gris); cursor: pointer; padding: 4px; border-radius: var(--r-petit); }
+.charge-effacer:hover { color: var(--blanc); background: var(--surface2); }
+.charge-effacer .a-icone { width: 18px; height: 18px; }
+.charge-groupe { display: flex; align-items: center; gap: var(--e2); margin-top: var(--e3); }
+.charge-biblio { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--e2); margin-top: var(--e2); }
+.charge-biblio button { display: grid; text-align: left; gap: 2px; padding: 8px 10px; border: 1px solid var(--ligne); border-radius: var(--r-petit); background: var(--surface2); color: var(--blanc); font: inherit; font-size: var(--t-petit); cursor: pointer; }
+.charge-biblio button:hover { border-color: var(--orange); }
+.charge-biblio small { color: var(--gris); }

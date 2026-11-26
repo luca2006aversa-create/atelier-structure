@@ -26,7 +26,8 @@ Tout est en **mètres**. Repère du site : `x` = largeur, `y` = hauteur,
 | `portiques` | `entraxe`, `nombre`, et la liste des profondeurs `z` où répéter la coupe |
 | `nappes` | toits et dalles : le contour de la coupe |
 | `toiles` | les bâches : une ligne, pas de volume |
-| `pannes` | les points où poser une panne, section dans `panne` |
+| `pannes` | où poser une panne (`p`), et son contour posé sur la poutre (`contour`) ; section dans `panne` |
+| `moise` (dans une barre) | moise : deux pièces décalées de ± cette valeur en z |
 | `matieres` | nom, couleur, densité, module de chaque matière citée |
 
 Les axes seuls suffisent pour tout refaire autrement : trame, variantes,

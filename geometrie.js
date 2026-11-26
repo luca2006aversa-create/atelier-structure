@@ -1,6 +1,7 @@
 // Géométrie de l'atelier : types, calculs de vecteurs, et formes à dessiner (écran, papier, 3D).
 // Unités : mètres, y vers le haut, sol à 0.
 import { sectionDe } from './matieres.js';
+import { chargesBarre, chargesNoeud, position, UNITES } from './charges.js';
 
 export const TYPES_BARRE = [
   ['poteau', 'Poteau'], ['poutre', 'Poutre'], ['bequille', 'Béquille'], ['entretoise', 'Entretoise'],
@@ -236,8 +237,8 @@ export const hauteurVue = (b) => sectionDe(b).h;
 // Un élément linéaire : simple trait, ou bande à sa vraie largeur si K.sections est actif.
 function lin(out, st, id, A, B, K, e, sec = null) {
   if (K.sections && e > 0.004) {
-    // ax et h servent aux jonctions (raccorderBandes) ; sec aux détails (ailes, parois).
-    out.push({ k: 'p', st: st + '-vol', id, p: bande(A, B, unite(sub(B, A)), e), ferme: true, ax: [A, B], h: e / 2, sec });
+    // ax et h servent aux jonctions (raccorderBandes) ; ax0 garde l'axe dessiné ; sec aux détails.
+    out.push({ k: 'p', st: st + '-vol', id, p: bande(A, B, unite(sub(B, A)), e), ferme: true, ax: [A, B], ax0: [A, B], h: e / 2, sec });
     return;
   }
   out.push({ k: 'l', st, id, p: [A, B] });
@@ -247,16 +248,108 @@ function lin(out, st, id, A, B, K, e, sec = null) {
 // Qui passe devant qui quand deux barres se touchent : la plus forte reste entière,
 // l'autre s'arrête contre sa face. Deux barres de même rang se coupent en onglet.
 const RANG = { 'poteau-vol': 9, 'poutre-vol': 8, 'membrure-vol': 7, 'bequille-vol': 6, 'entretoise-vol': 5, 'diagonale-vol': 4, 'cable-vol': 3 };
+// Choix de croisement d'un nœud (nd.jonction).
+export const JONCTIONS = [
+  ['auto', 'Automatique'], ['vertical', 'Poteau passant'], ['horizontal', 'Poutre passante'],
+  ['onglet', 'Onglet'], ['coupe', 'Pièces séparées'],
+];
 const croix2 = (a, b) => a[0] * b[1] - a[1] * b[0];
 // Paramètre t sur la droite P + t·v là où elle coupe la droite Q + s·w.
 const inter = (P, v, Q, w) => { const c = croix2(v, w); return Math.abs(c) < 1e-9 ? null : croix2(sub(Q, P), w) / c; };
+const clePt = (P) => P[0].toFixed(3) + ',' + P[1].toFixed(3);
+
+// Mode de jonction de chaque nœud, rangé par sa position : Map('x,y' → mode).
+export function modesJonction(f) {
+  const J = new Map();
+  for (const n of f.noeuds || []) if (n.jonction && n.jonction !== 'auto') J.set(clePt([n.x, n.y]), n.jonction);
+  return J;
+}
+
+// Une pièce devient un tronçon : invisible, elle garde sa forme pour qu'on puisse la cliquer.
+function enTroncon(b) {
+  b.ex = b.st; b.h0 = b.h; // ce qu'elle était (les pannes en ont besoin)
+  b.st = 'troncon';
+  delete b.ax; delete b.h; delete b.sec;
+}
 
 // Calcule les nouveaux bouts de chaque bande ; modifie p et ax en place.
-export function raccorderBandes(prims) {
-  const B = prims.filter((p) => p.ax && RANG[p.st]);
-  if (B.length < 2) return prims;
+// J : modes de jonction des nœuds (modesJonction).
+export function raccorderBandes(prims, J = new Map()) {
+  const mode = (P) => J.get(clePt(P)) || 'auto';
+  // Moises : doublées de part et d'autre, elles ne coupent personne et ne sont pas coupées.
+  for (const m of prims) {
+    if (!m.ax || !RANG[m.st] || !m.bar?.moise) continue;
+    const u = unite(sub(m.ax[1], m.ax[0]));
+    const A = sub(m.ax[0], mul(u, m.h * 2));
+    const B = add(m.ax[1], mul(u, m.h * 2));
+    m.p = bande(A, B, u, 2 * m.h);
+    m.ax = [A, B];
+    m.moise = true;
+  }
+  let B = prims.filter((p) => p.ax && RANG[p.st] && !p.moise);
   const tol = 1e-3;
   for (const b of B) { b._u = unite(sub(b.ax[1], b.ax[0])); b._L = dist(b.ax[0], b.ax[1]); }
+
+  // 0a. Barres dans le prolongement, même pièce : une seule pièce continue.
+  const pere = new Map(B.map((b) => [b, b]));
+  const racine = (b) => { while (pere.get(b) !== b) b = pere.get(b); return b; };
+  const meme = (a, b) => a.st === b.st && a.st !== 'diagonale-vol' && Math.abs(a.h - b.h) < 1e-6
+    && JSON.stringify(a.sec || null) === JSON.stringify(b.sec || null) && (a.bar?.mat || '') === (b.bar?.mat || '');
+  for (let i = 0; i < B.length; i++) {
+    for (let j = i + 1; j < B.length; j++) {
+      const a = B[i];
+      const b = B[j];
+      if (!meme(a, b) || Math.abs(croix2(a._u, b._u)) > 0.01) continue;
+      for (const ka of [0, 1]) for (const kb of [0, 1]) {
+        const E = a.ax[ka];
+        if (dist(E, b.ax[kb]) > tol) continue;
+        const va = ka === 1 ? a._u : mul(a._u, -1); // vers l'extérieur de a
+        const vb = kb === 1 ? b._u : mul(b._u, -1);
+        if (dot(va, vb) > -0.99) continue; // il faut qu'elles repartent de chaque côté
+        const md = mode(E);
+        const ok = md === 'auto' || (md === 'vertical' && Math.abs(a._u[1]) > 0.7) || (md === 'horizontal' && Math.abs(a._u[0]) > 0.7);
+        if (ok) pere.set(racine(b), racine(a));
+      }
+    }
+  }
+  const groupes = new Map();
+  for (const b of B) { const r = racine(b); if (!groupes.has(r)) groupes.set(r, []); groupes.get(r).push(b); }
+  for (const g of groupes.values()) {
+    if (g.length < 2) continue;
+    const t = g[0];
+    const O = t.ax[0];
+    let s0 = Infinity;
+    let s1 = -Infinity;
+    for (const b of g) for (const P of b.ax) { const s = dot(sub(P, O), t._u); s0 = Math.min(s0, s); s1 = Math.max(s1, s); }
+    const A = add(O, mul(t._u, s0));
+    const Z = add(O, mul(t._u, s1));
+    t.ax = [A, Z];
+    t._L = s1 - s0;
+    t.p = bande(A, Z, t._u, 2 * t.h);
+    t.ids = g.map((b) => b.id);
+    for (const b of g.slice(1)) enTroncon(b);
+  }
+  B = B.filter((b) => b.st !== 'troncon');
+
+  // 0b. Une barre plus faible couchée dans une plus forte (montant de bout de treillis dans un poteau) disparaît.
+  for (const w of B) {
+    for (const s of B) {
+      if (s === w || !s.ax || !w.ax || RANG[s.st] <= RANG[w.st] || Math.abs(croix2(w._u, s._u)) > 0.02) continue;
+      const dans = (P) => { const q = distSeg(P, s.ax[0], s.ax[1]); return q.d <= s.h + tol && q.t > -1e-6 && q.t < 1 + 1e-6; };
+      if (dans(w.ax[0]) && dans(w.ax[1])) { enTroncon(w); break; }
+    }
+  }
+  B = B.filter((b) => b.st !== 'troncon');
+  if (B.length < 2) { for (const b of B) { delete b._u; delete b._L; } return prims; }
+
+  // Rang d'une barre à un nœud, selon le croisement choisi.
+  const rang = (b, E) => {
+    const md = mode(E);
+    if (md === 'onglet') return 5;
+    const u = b._u;
+    return RANG[b.st] + (md === 'vertical' ? 100 * Math.abs(u[1]) : md === 'horizontal' ? 100 * Math.abs(u[0]) : 0);
+  };
+
   const coupes = new Map();
   for (const b of B) {
     const bouts = [];
@@ -266,6 +359,7 @@ export function raccorderBandes(prims) {
       const n = normale(v);
       const h = b.h;
       const lim = 6 * h + 0.05;
+      const rb = rang(b, E);
       const auBout = [];
       const traverse = [];
       for (const o of B) {
@@ -274,13 +368,13 @@ export function raccorderBandes(prims) {
         const bout = dist(E, o.ax[0]) < tol || dist(E, o.ax[1]) < tol;
         const vo = dist(E, o.ax[0]) < tol ? o._u : dist(E, o.ax[1]) < tol ? mul(o._u, -1) : o._u;
         const s = croix2(v, vo);
-        (bout ? auBout : traverse).push({ o, vo, s, c: v[0] * vo[0] + v[1] * vo[1] });
+        (bout ? auBout : traverse).push({ o, vo, s, c: v[0] * vo[0] + v[1] * vo[1], r: rang(o, E) });
       }
       let tg = 0;
       let td = 0;
       let fait = false;
       // 1. Contre une barre plus forte, ou une barre qu'on touche en son milieu : on s'arrête à sa face.
-      const fortes = [...traverse, ...auBout.filter((x) => RANG[x.o.st] > RANG[b.st])].filter((x) => Math.abs(x.s) > 0.05);
+      const fortes = [...traverse, ...auBout.filter((x) => x.r > rb)].filter((x) => Math.abs(x.s) > 0.05);
       for (const { o } of fortes) {
         const no = normale(o._u);
         const cote = Math.sign(croix2(o._u, sub(b.ax[1 - k], o.ax[0]))) || 1; // face tournée vers nous
@@ -294,9 +388,9 @@ export function raccorderBandes(prims) {
         if (!fait) { tg = g; td = d; fait = true; } else { tg = Math.max(tg, g); td = Math.max(td, d); }
       }
       if (!fait) {
-        const egales = auBout.filter((x) => RANG[x.o.st] === RANG[b.st]);
+        const egales = auBout.filter((x) => x.r === rb);
         // Une barre aussi forte continue dans le prolongement (poteau d'étage…) : on ne dépasse pas.
-        const suite = auBout.some((x) => Math.abs(x.s) < 0.05 && x.c < 0 && RANG[x.o.st] >= RANG[b.st]);
+        const suite = auBout.some((x) => Math.abs(x.s) < 0.05 && x.c < 0 && x.r >= rb);
         const angle = egales.filter((x) => Math.abs(x.s) > 0.05);
         if (egales.length === 1 && angle.length === 1) {
           // 2. Onglet : le bord gauche de l'une rencontre le bord droit de l'autre.
@@ -308,8 +402,8 @@ export function raccorderBandes(prims) {
         } else if (!suite) {
           // 3. On est la barre forte du nœud : on dépasse juste assez pour couvrir le bout des autres.
           let t = 0;
-          for (const { o, vo, s } of auBout) {
-            if (RANG[o.st] >= RANG[b.st] || Math.abs(s) < 0.05) continue;
+          for (const { o, vo, s, r } of auBout) {
+            if (r >= rb || Math.abs(s) < 0.05) continue;
             // Les bords de l'autre barre rencontrent nos faces : on monte jusqu'au plus haut de ces coins.
             const no = normale(vo);
             for (const s1 of [1, -1]) for (const s2 of [1, -1]) {
@@ -362,6 +456,22 @@ export function detailsBandes(prims) {
   return out;
 }
 
+// Décalage en profondeur des deux moitiés d'une moise : elle serre les pièces qu'elle touche.
+function decalerMoises(liste) {
+  const larg = new Map(); // nœud → plus large barre non moisée qui y arrive
+  for (const { b } of liste) {
+    if (b.moise) continue;
+    const w = sectionDe(b).b || 0.1;
+    for (const n of [b.a, b.b]) larg.set(n, Math.max(larg.get(n) || 0, w));
+  }
+  for (const { b, prims } of liste) {
+    if (!b.moise) continue;
+    const w = Math.max(larg.get(b.a) || 0, larg.get(b.b) || 0, 0.1);
+    const d = w / 2 + (sectionDe(b).b || 0.05) / 2;
+    for (const pr of prims) if (pr.moise) pr.decal = d;
+  }
+}
+
 // Toutes les barres d'une coupe à leur vraie largeur, jonctions faites : [{ b, prims }].
 export function barresEnSections(f, K, N = carteNoeuds(f)) {
   const liste = [];
@@ -372,11 +482,62 @@ export function barresEnSections(f, K, N = carteNoeuds(f)) {
     if (!na || !nb) continue;
     const prims = [];
     primitivesBarre(b, [na.x, na.y], [nb.x, nb.y], { ...K, sections: true }, prims);
+    for (const pr of prims) pr.bar = b;
     liste.push({ b, prims });
     tout.push(...prims);
   }
-  raccorderBandes(tout);
+  raccorderBandes(tout, modesJonction(f));
+  decalerMoises(liste);
   return liste;
+}
+
+// Pannes posées sur le dessus des poutres et des membrures, d'un portique à l'autre.
+// Une panne suit la pente de sa poutre ; elle est refusée si elle entre dans une autre pièce.
+export const PANNE = [0.08, 0.16];
+export function pannesCoupe(f, liste = barresEnSections(f, { su: 1, cote: 1, txt: { 1: 1, 2: 1, 3: 1 } })) {
+  const bandes = [];
+  const appuis = [];
+  for (const { prims } of liste) {
+    for (const pr of prims) {
+      if (pr.k === 'p' && pr.ferme && RANG[pr.st]) bandes.push(pr);
+      if (pr.ax0 && ['poutre-vol', 'membrure-vol'].includes(pr.st === 'troncon' ? pr.ex : pr.st)) appuis.push(pr);
+    }
+  }
+  // Chaque bout d'axe de poutre ou de membrure, avec les barres qui y arrivent.
+  const pts = new Map();
+  for (const pr of appuis) {
+    for (const P of pr.ax0) {
+      if (P[1] <= 0.01) continue;
+      const k = clePt(P);
+      if (!pts.has(k)) pts.set(k, { P, liens: [] });
+      pts.get(k).liens.push(pr);
+    }
+  }
+  const [lp, hp] = PANNE;
+  const out = [];
+  for (const { P, liens } of pts.values()) {
+    let up = [0, 0];
+    let h = 0;
+    for (const pr of liens) {
+      const u = unite(sub(pr.ax0[1], pr.ax0[0]));
+      let n = normale(u);
+      if (n[1] < 0) n = mul(n, -1);
+      up = add(up, n);
+      h = Math.max(h, pr.h0 || pr.h || 0);
+    }
+    up = unite(up);
+    if (up[1] < 0.2) continue; // pas de dessus sur une barre presque verticale
+    const t = [up[1], -up[0]];
+    const C = add(P, mul(up, h + hp / 2 + 0.002));
+    const coin = (a, b) => add(add(C, mul(t, a * lp / 2)), mul(up, b * hp / 2));
+    const p = [coin(-1, -1), coin(1, -1), coin(1, 1), coin(-1, 1)];
+    // Points d'essai un peu en retrait : la panne ne doit entrer dans aucune pièce.
+    const essai = [C, ...p.map((q) => lerp(C, q, 0.85))];
+    const gene = bandes.some((pr) => essai.some((q) => dansPolygone(q, pr.p)) || pr.p.some((q) => dansPolygone(q, p)));
+    if (gene) continue;
+    out.push({ id: liens[0].id, c: C, p, ang: Math.atan2(t[1], t[0]) });
+  }
+  return out;
 }
 
 // ---------- Formes d'une barre ----------
@@ -641,6 +802,53 @@ export function refletCoupe(c, out) {
   if (zs.length > 1) for (const x of xs) out.push({ k: 'l', st: 'reflet', id: null, p: [[x, z0], [x, z1]] });
 }
 
+// Charges ajoutées, à l'écran seulement : flèches vers le bas au-dessus de la barre ou du nœud.
+const nbFr = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
+function flecheCharge(x, y, h, su, id, out) {
+  out.push({ k: 'l', st: 'charge', id, p: [[x, y + h], [x, y + 0.35 * su]] });
+  out.push({ k: 'p', st: 'charge-pointe', id, ferme: true, p: [[x, y + 0.1 * su], [x - 0.32 * su, y + 0.75 * su], [x + 0.32 * su, y + 0.75 * su]] });
+}
+function primitivesCharges(f, N, K, out) {
+  const su = K.su;
+  const h = K.txt[1];
+  for (const b of f.barres) {
+    const liste = chargesBarre(b);
+    if (!liste.length) continue;
+    const na = N.get(b.a);
+    const nb = N.get(b.b);
+    if (!na || !nb) continue;
+    const A = [na.x, na.y];
+    const B = [nb.x, nb.y];
+    // Réparties : une rangée de petites flèches reliées par un trait.
+    const rep = liste.filter((c) => c.k !== 'ponctuelle');
+    if (rep.length) {
+      const H = 1.6 * su;
+      const L = dist(A, B);
+      const n = Math.max(2, Math.min(24, Math.round(L / (1.4 * su))));
+      for (let i = 0; i <= n; i++) { const P = lerp(A, B, i / n); flecheCharge(P[0], P[1], H, su, b.id, out); }
+      out.push({ k: 'l', st: 'charge', id: b.id, p: [[A[0], A[1] + H], [B[0], B[1] + H]] });
+      const M = lerp(A, B, 0.5);
+      const txt = rep.map((c) => nbFr(+c.v) + ' ' + UNITES[c.k]).join(' + ');
+      out.push({ k: 't', st: 'charge-txt', id: b.id, c: [M[0], M[1] + H + 0.45 * su], txt, ang: 0, h, ancre: 'middle' });
+    }
+    // Objets : une grande flèche à leur place.
+    const haut = rep.length ? 3.6 * su : 2.6 * su;
+    for (const c of liste.filter((x) => x.k === 'ponctuelle')) {
+      const P = lerp(A, B, position(c));
+      flecheCharge(P[0], P[1], haut, su, b.id, out);
+      out.push({ k: 't', st: 'charge-txt', id: b.id, c: [P[0], P[1] + haut + 0.45 * su], txt: (c.nom ? c.nom + ' · ' : '') + nbFr(+c.v) + ' kN', ang: 0, h, ancre: 'middle' });
+    }
+  }
+  for (const nd of f.noeuds) {
+    const liste = chargesNoeud(nd);
+    if (!liste.length) continue;
+    const v = liste.reduce((s, c) => s + +c.v, 0);
+    flecheCharge(nd.x, nd.y, 2.6 * su, su, nd.id, out);
+    const nom = liste.length === 1 && liste[0].nom ? liste[0].nom + ' · ' : '';
+    out.push({ k: 't', st: 'charge-txt', id: nd.id, c: [nd.x, nd.y + 3.05 * su], txt: nom + nbFr(v) + ' kN', ang: 0, h, ancre: 'middle' });
+  }
+}
+
 export function primitivesFeuille(f, K0, ecran, reflet = null) {
   const out = [];
   if (reflet && estPlan(f)) refletCoupe(reflet, out);
@@ -661,17 +869,21 @@ export function primitivesFeuille(f, K0, ecran, reflet = null) {
       if (J.cache.has(b.id)) continue; // sous une porte ou une fenêtre
       x = { coins: bandeMur(b, A, B, J, N) };
     } else if (J && OUVERTURES.has(b.type)) x = { e: J.ep.get(b.id) };
+    const i0 = out.length;
     primitivesBarre(b, A, B, K, out, x);
+    for (let i = i0; i < out.length; i++) out[i].bar = b;
   }
   if (K.sections) {
-    raccorderBandes(out);
-    // Les détails juste après leur barre : une barre de devant les cache bien.
+    raccorderBandes(out, modesJonction(f));
+    // Les détails juste après leur barre : une barre de devant les cache bien. Les moises passent devant tout.
     const tri = [];
-    for (const pr of out) { tri.push(pr); if (pr.ax) tri.push(...detailsBandes([pr])); }
-    out.splice(0, out.length, ...tri);
+    const devant = [];
+    for (const pr of out) { const t = pr.moise ? devant : tri; t.push(pr); if (pr.ax) t.push(...detailsBandes([pr])); }
+    out.splice(0, out.length, ...tri, ...devant);
   }
   for (const s of f.traits || []) if (s.pts.length > 1) out.push({ k: 'p', st: 'trait', id: s.id, p: s.pts, ferme: false });
   for (const nd of f.noeuds) primitivesNoeud(nd, K, out, ecran);
+  if (ecran && !estPlan(f)) primitivesCharges(f, N, K, out);
   for (const c of f.cotes || []) primitivesCote(c, pointCote(c.a, N), pointCote(c.b, N), K, out);
   for (const t of f.textes || []) {
     out.push({ k: 't', st: 'texte', id: t.id, c: [t.x, t.y], txt: t.texte, ang: 0, h: K.txt[t.taille || 2], ancre: 'start' });

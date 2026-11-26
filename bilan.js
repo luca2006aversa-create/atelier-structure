@@ -38,7 +38,7 @@ function barres(lignes, { limite = null, echelle = null } = {}) {
   return `<svg class="c-courbe b-barres" viewBox="0 0 ${W} ${H}" role="img">${rangs}${lim}</svg>`;
 }
 
-const nomBarre = (b) => (NOM_BARRE[b.type] || b.type) + ' ' + b.id;
+const nomBarre = (b, role) => (NOM_BARRE[b.type] || b.type) + ' ' + b.id + (role ? ' · ' + role : '');
 
 // ---------- Coupe ----------
 function bilanCoupe(f) {
@@ -54,9 +54,12 @@ function bilanCoupe(f) {
       'Le calcul se lance tout seul dès que la coupe tient debout : poteaux posés au sol, poutres reliées.');
   }
   const els = r.els;
+  // Une barre coupée en morceaux (treillis, objet posé) : on garde son morceau le plus chargé.
+  const pires = new Map();
+  for (const e of els) { const k = e.id + '|' + (e.role || ''); const v = pires.get(k); if (!v || e.taux > v.taux) pires.set(k, e); }
   const pire = els.reduce((a, e) => (e.taux > a.taux ? e : a), els[0]);
   // Flèches : seulement les barres à plat qui portent (pas les câbles ni les diagonales).
-  const poutres = els.filter((e) => e.plat && e.b.type !== 'cable' && e.b.type !== 'diagonale' && e.L > 0.5)
+  const poutres = [...pires.values()].filter((e) => e.plat && !e.secondaire && e.b.type !== 'cable' && e.b.type !== 'diagonale' && e.L > 0.5)
     .map((e) => ({ e, lim: e.L / 300, ratio: e.fleche / (e.L / 300) }))
     .sort((a, b) => b.ratio - a.ratio);
   const pf = poutres[0];
@@ -64,24 +67,24 @@ function bilanCoupe(f) {
       <div class="a-carte creuse c-verdict${r.tauxMax > 1 ? ' c-rate' : ''}">
         <span class="a-etiquette">Résistance</span>
         <strong class="c-gros">${n2(r.tauxMax)}</strong>
-        <span class="a-discret">${esc(nomBarre(pire.b))}, limite 1,00 — ${r.tauxMax > 1 ? 'ça ne tient pas' : 'ça tient'}</span>
+        <span class="a-discret">${esc(nomBarre(pire.b, pire.role))}, limite 1,00 — ${r.tauxMax > 1 ? 'ça ne tient pas' : 'ça tient'}</span>
       </div>
       <div class="a-carte creuse c-verdict${pf && pf.ratio > 1 ? ' c-rate' : ''}">
         <span class="a-etiquette">Flèche</span>
         <strong class="c-gros">${pf ? n2(pf.ratio) : '—'}</strong>
-        <span class="a-discret">${pf ? esc(nomBarre(pf.e.b)) + ', ' + n0(pf.e.fleche * 1000) + ' mm pour ' + n0(pf.lim * 1000) + ' mm permis (L/300)' : 'aucune poutre à plat'}</span>
+        <span class="a-discret">${pf ? esc(nomBarre(pf.e.b, pf.e.role)) + ', ' + n0(pf.e.fleche * 1000) + ' mm pour ' + n0(pf.lim * 1000) + ' mm permis (L/300)' : 'aucune poutre à plat'}</span>
       </div>
     </div>`;
-  const tri = els.slice().sort((a, b) => b.taux - a.taux);
+  const tri = [...pires.values()].sort((a, b) => b.taux - a.taux);
   const montres = tri.slice(0, MAX_BARRES);
   const graphe = barres(montres.map((e) => ({
-    id: e.id, nom: nomBarre(e.b), detail: texteSection(e.b) + ' · ' + n1(e.L) + ' m', valeur: e.taux, texte: n2(e.taux),
+    id: e.id, nom: nomBarre(e.b, e.role), detail: texteSection(e.b) + ' · ' + n1(e.L) + ' m', valeur: e.taux, texte: n2(e.taux),
   })), { limite: 1 });
   const carteTaux = carte('Taux de travail par barre', 'pilotage',
     graphe + `<div class="c-legende"><span><i class="c-puce c-trac"></i>tient (≤ 1,00)</span><span><i class="c-puce c-comp"></i>trop chargée</span><span>clic sur une barre = la voir dans le dessin</span></div>`,
     tri.length > MAX_BARRES ? `Les ${MAX_BARRES} barres les plus chargées sur ${tri.length}.` : 'Flexion + effort normal, Eurocode simplifié (sans flambement ni assemblages).');
   const carteFleche = poutres.length ? carte('Flèche des poutres', 'regle',
-    poutres.slice(0, MAX_FLECHES).map((p) => jauge(esc(nomBarre(p.e.b)), p.ratio, n0(p.e.fleche * 1000) + ' / ' + n0(p.lim * 1000) + ' mm', p.ratio > 1)).join(''),
+    poutres.slice(0, MAX_FLECHES).map((p) => jauge(esc(nomBarre(p.e.b, p.e.role)), p.ratio, n0(p.e.fleche * 1000) + ' / ' + n0(p.lim * 1000) + ' mm', p.ratio > 1)).join(''),
     'Flèche à mi-portée, depuis la ligne entre les deux bouts, sous charges de service G + Q (sans majoration). Limite L/300, tout de suite (sans fluage).') : '';
   let Rv = 0;
   for (const v of r.reactions.values()) Rv += v[1];

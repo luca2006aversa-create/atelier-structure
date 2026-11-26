@@ -1,7 +1,7 @@
 // Panneau de droite : réglages précis de ce qui est choisi.
 // Rien de choisi : l'outil en cours, la feuille, le croquis de fond et les gestes.
 import { etat, feuille, modifie, rafraichir, toast, crochets, appliquerVue, paireDe } from './etat.js';
-import { TYPES_BARRE, FORMES_TREILLIS, FORMES_TOIT, NOM_BARRE, NOM_NOEUD, BARRES_PLAN, carteNoeuds, pointCote, estPlan } from './geometrie.js';
+import { TYPES_BARRE, FORMES_TREILLIS, FORMES_TOIT, NOM_BARRE, NOM_NOEUD, BARRES_PLAN, BARRES_LIN, JONCTIONS, carteNoeuds, pointCote, estPlan } from './geometrie.js';
 import { supprimerSelection, retourner, copier, symetrie, reglagesBarre } from './commandes.js';
 import { apresDeplacement, synchroCotes, couperParNoeuds } from './topologie.js';
 import { choisirFond, urlCroquis } from './croquis.js';
@@ -12,6 +12,7 @@ import { svgPapier } from './rendu.js';
 import { picto, ico } from './pictos.js';
 import { etalonnerCroquis, deplacerCroquis, nomOutil } from './outils.js';
 import { demanderDessin } from './scene.js';
+import { BIBLIO, NOMS_SORTES, UNITES, texteCharge, nouvelleCharge, position } from './charges.js';
 import {
   MATIERES, ORDRE_MATIERES, FAMILLES, FORMES_SECTION, NOMS_PROFILS,
   matiereDe, cleMatiere, sectionDe, proprietes, poidsML, texteSection, predim, porteeCourante,
@@ -153,6 +154,22 @@ function grilleFormes(actif, id = '') {
   return '<div class="grille-types deux-col">' + FORMES_TREILLIS.map(([f, nom]) =>
     `<button type="button" class="type${f === actif ? ' on' : ''}" data-act="forme" data-v="${f}"${id ? ` data-id="${id}"` : ''}>`
     + `<svg class="apercu" viewBox="0 0 100 26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="${APERCUS[f] || APERCUS.warren}"/></svg>`
+    + `<span>${esc(nom)}</span></button>`,
+  ).join('') + '</div>';
+}
+
+// Croisement des barres à un nœud : qui passe, qui s'arrête.
+const APERCUS_JONCTION = {
+  auto: 'M45 1V25M55 1V25M45 1H55M45 25H55M2 9H45M2 17H45M55 9H98M55 17H98M2 9V17M98 9V17',
+  vertical: 'M45 1V25M55 1V25M45 1H55M45 25H55M2 9H45M2 17H45M55 9H98M55 17H98M2 9V17M98 9V17',
+  horizontal: 'M2 9H98M2 17H98M2 9V17M98 9V17M45 1V9M55 1V9M45 1H55M45 17V25M55 17V25M45 25H55',
+  onglet: 'M45 25V9H98M55 25V17H98M45 9L55 17M45 25H55M98 9V17',
+  coupe: 'M45 1V7M55 1V7M45 1H55M45 7H55M45 19V25M55 19V25M45 19H55M45 25H55M2 9H42M2 17H42M42 9V17M2 9V17M58 9H98M58 17H98M58 9V17M98 9V17',
+};
+function grilleJonctions(actif) {
+  return '<div class="grille-types deux-col">' + JONCTIONS.map(([j, nom]) =>
+    `<button type="button" class="type${j === actif ? ' on' : ''}" data-act="jonction" data-v="${j}">`
+    + `<svg class="apercu" viewBox="0 0 100 26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"${j === 'auto' ? ' stroke-dasharray="3 3"' : ''}><path d="${APERCUS_JONCTION[j]}"/></svg>`
     + `<span>${esc(nom)}</span></button>`,
   ).join('') + '</div>';
 }
@@ -322,7 +339,44 @@ function blocNoeud(n, f) {
       + (plan ? '' : discret('Y = 0 : le sol.')))
     + bloc(titre(picto(plan ? 'n-poteau' : 'n-appui'), plan ? 'Type' : 'Liaison') + grilleTypesNoeud(n.type, plan)
       + discret((plan ? 'Éléments reliés : ' : 'Barres reliées : ') + relies))
+    + (plan || relies < 2 ? '' : bloc(titre(picto('treillis'), 'Croisement') + grilleJonctions(n.jonction || 'auto')
+      + discret('Automatique : deux barres alignées de même section deviennent une seule pièce.')))
+    + (plan ? '' : blocCharges(n, 0))
     + bloc(rangee(bouton('effacer', 'supprimer', 'Effacer', 'danger')));
+}
+
+// ---------- Charges ajoutées (étage, mur, objet) ----------
+const GROUPES_CHARGE = [['surface', 'etage', 'Étage, plancher'], ['lineique', 'mur', 'Le long de la barre'], ['ponctuelle', 'objet', 'Objet en un point']];
+const PICTO_CHARGE = { surface: 'etage', lineique: 'mur', ponctuelle: 'objet' };
+const PORTE_CHARGE = new Set(['poteau', 'poutre', 'bequille', 'entretoise', 'treillis', 'dalle', 'membrure']);
+
+function blocCharges(o, L) {
+  const noeud = o.id[0] === 'n';
+  const liste = Array.isArray(o.charges) ? o.charges : [];
+  const attr = (c) => ` data-id="${o.id}" data-ch="${esc(c.id)}"`;
+  const lignes = liste.map((c) => {
+    const k = UNITES[c.k] ? c.k : 'ponctuelle';
+    const cat = [['G', 'Permanente'], ['Q', 'Variable']].map(([g, nom]) =>
+      `<button type="button" class="${c.cat === g ? 'on' : ''}" data-act="charge-cat" data-v="${g}"${attr(c)}>${nom}</button>`).join('');
+    return '<div class="charge">'
+      + `<div class="charge-tete">${picto(PICTO_CHARGE[k])}<span>${esc(c.nom || NOMS_SORTES[k])}</span>`
+      + `<button type="button" class="charge-effacer" data-act="charge-effacer"${attr(c)} title="Retirer">${picto('supprimer')}</button></div>`
+      + champ('Valeur', 'ch.v', nb(+c.v, 2), { id: o.id, unite: UNITES[k], pas: k === 'ponctuelle' ? 0.5 : 0.25, extra: ` data-ch="${esc(c.id)}"` })
+      + (k === 'ponctuelle' && !noeud && L > 0
+        ? champ('Depuis le début', 'ch.d', nb(position(c) * L, 2), { id: o.id, unite: 'm', pas: etat.pas || 0.1, extra: ` data-ch="${esc(c.id)}" data-l="${L}"` }) : '')
+      + `<div class="ligne-champ"><span>Durée</span><div class="a-bascule bascule-pleine">${cat}</div></div>`
+      + discret(texteCharge(c)) + '</div>';
+  }).join('');
+  const groupes = GROUPES_CHARGE.filter((g) => !noeud || g[0] === 'ponctuelle').map(([k, ic, nom]) =>
+    `<div class="charge-groupe">${picto(ic)}<span class="a-etiquette">${esc(nom)}</span></div><div class="charge-biblio">`
+    + BIBLIO.filter((m) => m.k === k).map((m) =>
+      `<button type="button" data-act="charge-ajouter" data-v="${m.id}" data-id="${o.id}">${esc(m.nom)}<small>${nb(m.v, 2)} ${UNITES[k]}</small></button>`).join('')
+    + `<button type="button" data-act="charge-ajouter" data-v="libre-${k}" data-id="${o.id}">Autre<small>à régler</small></button></div>`).join('');
+  return bloc(titre(picto('charge'), noeud ? 'Poids accroché' : 'Charges en plus') + lignes
+    + (liste.length ? '' : discret(noeud ? 'Un objet suspendu à ce nœud : lustre, agrès, machine…' : 'Un étage posé dessus, un mur, un objet…'))
+    + groupes
+    + (noeud ? '' : discret('Étage : la charge par m² est multipliée par l’entraxe des portiques.'))
+    + discret('Permanente : toujours là (× 1,35). Variable : gens, meubles, neige (× 1,5).'));
 }
 
 function blocBarre(b, f) {
@@ -351,6 +405,9 @@ function blocBarre(b, f) {
     + bloc(titre(picto('grille'), 'Type') + grilleTypesBarre(b.type, plan))
     + reglagesType(b.type, b)
     + blocSection(b, f)
+    + (plan || !BARRES_LIN.has(b.type) || b.type === 'toit' ? '' : bloc(interrupteur('b.moise', 'section', 'Moisée (doublée de chaque côté)', !!b.moise)
+      + discret('Deux pièces serrent les barres qu’elle croise. Elle passe devant, rien ne la coupe.')))
+    + (plan || !PORTE_CHARGE.has(b.type) ? '' : blocCharges(b, L))
     + boutonsFin(RETOURNABLES.has(b.type));
 }
 
@@ -720,6 +777,21 @@ function appliquer(el, final) {
     else k.rot = arr(angle180(v));
     return true;
   }
+  if (cle === 'ch.v' || cle === 'ch.d') {
+    const c = (o?.charges || []).find((x) => x.id === el.dataset.ch);
+    if (!c) return false;
+    const v = lireNombre(el.value);
+    if (cle === 'ch.v') {
+      if (!Number.isFinite(v) || v <= 0 || v > 10000) return refus();
+      c.v = Math.round(v * 1000) / 1000;
+      return true;
+    }
+    const L = +el.dataset.l || 1;
+    if (!Number.isFinite(v)) return refus();
+    c.t = Math.round(Math.max(0, Math.min(1, v / L)) * 10000) / 10000;
+    if (final) el.value = nb(c.t * L, 2);
+    return true;
+  }
   return false;
 }
 
@@ -752,6 +824,17 @@ function surChange(ev) {
     if (el.dataset.champ === 'f.sections') {
       const g = feuille();
       if (g) { g.sections = el.checked; modifie(); }
+      return;
+    }
+    if (el.dataset.champ === 'b.moise') {
+      const g = feuille();
+      if (!g) return;
+      for (const id of choisis(g)) {
+        const o = id[0] === 'b' ? objet(id, g) : null;
+        if (!o) continue;
+        if (el.checked) o.moise = true; else delete o.moise;
+      }
+      modifie();
       return;
     }
     const k = feuille()?.croquis;
@@ -813,6 +896,39 @@ async function agir(act, v, el) {
   const ids = choisis(f);
   const de = (p) => ids.filter((id) => id[0] === p).map((id) => objet(id, f));
   switch (act) {
+    case 'charge-ajouter': {
+      const o = objet(el.dataset.id, f);
+      if (!o) return;
+      const libre = v.startsWith('libre-') ? v.slice(6) : '';
+      const m = libre ? { nom: NOMS_SORTES[libre], k: libre, v: libre === 'ponctuelle' ? 1 : 1, cat: 'G' } : BIBLIO.find((x) => x.id === v);
+      if (!m || (o.id[0] === 'n' && m.k !== 'ponctuelle')) return;
+      if (!Array.isArray(o.charges)) o.charges = [];
+      const pris = new Set(o.charges.map((c) => c.id));
+      let i = o.charges.length + 1;
+      while (pris.has('c' + i)) i++;
+      o.charges.push(nouvelleCharge(m, 'c' + i));
+      modifie();
+      toast(m.nom + ' ajouté');
+      return;
+    }
+    case 'charge-effacer':
+    case 'charge-cat': {
+      const o = objet(el.dataset.id, f);
+      const liste = o?.charges || [];
+      const i = liste.findIndex((c) => c.id === el.dataset.ch);
+      if (i < 0) return;
+      if (act === 'charge-cat') { if (liste[i].cat === v) return; liste[i].cat = v; }
+      else liste.splice(i, 1);
+      if (!liste.length) delete o.charges;
+      modifie();
+      return;
+    }
+    case 'jonction': {
+      let n = 0;
+      for (const o of de('n')) if ((o.jonction || 'auto') !== v) { if (v === 'auto') delete o.jonction; else o.jonction = v; n++; }
+      if (n) modifie();
+      return;
+    }
     case 'type-noeud': {
       let n = 0;
       for (const o of de('n')) if (o.type !== v) { o.type = v; n++; }
